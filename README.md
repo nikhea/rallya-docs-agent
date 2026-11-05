@@ -105,3 +105,4 @@ Tracing and logging are configured in `src/mastra/index.ts` and store everything
 
 - Pinned context needs Memory, which the agent has. The pinned listing shows the docs tree; raise `KNOWLEDGE_PINNED_MAX_TOKENS` to show deeper listings.
 - `KNOWLEDGE_READ_MAX_TOKENS` caps each `knowledge_read` call (default 2000). Long pages are read in parts.
+# rallya-docs-agent
