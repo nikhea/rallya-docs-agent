@@ -1,0 +1,116 @@
+import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
+
+import {
+  agentModel,
+  knowledgeScope,
+  memoryAtMaxRemoveTokens,
+  memoryMaxTokens,
+} from "../config";
+import { docInstructions } from "../instructions/doc.instructions";
+import { docsKnowledge } from "../knowledge";
+import { citationLinksProcessor } from "../processors/citation-links";
+import {
+  BatchPartsProcessor,
+  PrefillErrorHandler,
+  ProviderHistoryCompat,
+  StreamErrorRetryProcessor,
+  TokenLimiter,
+  UnicodeNormalizer,
+} from "@mastra/core/processors";
+import { EnsureFinalResponseProcessor } from "../processors/ensure-final-response";
+
+const MAX_STEPS = 5;
+/**
+ * Answers questions about Rallya from the documentation synced out of Sanity.
+ *
+ * Knowledge is attached with read-only tools (`knowledge_list`,
+ * `knowledge_search`, `knowledge_read`) plus pinned context, so the agent
+ * always starts with the docs tree in front of it. Memory is required for
+ * pinned context and gives conversations a thread to live in.
+ *
+ * Instructions live in `../instructions/doc.instructions.ts`, one exported
+ * block per concern (role, tasks, truth rules, knowledge sources, citation
+ * format, and so on) joined into `docInstructions`.
+ */
+export const docsAgent = new Agent({
+  id: "docs-agent",
+  name: "Rallya Docs Agent",
+  description:
+    "Answers questions about Rallya using the official documentation.",
+  instructions: docInstructions,
+  // Chat model comes from DOCS_AGENT_MODEL (see ../config.ts); no hardcoding.
+  model: agentModel,
+  // Deterministic backstop: rewrite the bracketed page markers / bare Sources
+  // lines the model sometimes emits into proper markdown links (see the file).
+  inputProcessors: [
+    new UnicodeNormalizer({
+      stripControlChars: true,
+      collapseWhitespace: true,
+    }),
+    new TokenLimiter(127000),
+    new EnsureFinalResponseProcessor(MAX_STEPS),
+  ],
+  outputProcessors: [
+    new BatchPartsProcessor({
+      batchSize: 10,
+      maxWaitTime: 100,
+      emitOnNonText: true,
+    }),
+    citationLinksProcessor,
+  ],
+  errorProcessors: [
+    new StreamErrorRetryProcessor(),
+    new PrefillErrorHandler(),
+    new ProviderHistoryCompat(),
+  ],
+
+  // Every run reads the docs scope, even when a caller (Studio, an API
+  // request) doesn't pass scopes. A list is added to the run's own scopes.
+  scopes: [knowledgeScope],
+  knowledge: docsKnowledge,
+  /**
+   * Message history: recent turns are loaded with the thread (stored via the
+   * Postgres storage on `Mastra`) and bounded by a token budget rather than a
+   * message count — a single `knowledge_read` can be thousands of tokens.
+   * System instructions, pinned context and the current turn are never trimmed.
+   */
+  memory: new Memory({
+    options: {
+      // Name threads after their first question, for the Studio thread list.
+      generateTitle: {
+        model: "openrouter/openrouter/free",
+      },
+      messageHistory: {
+        maxTokens: memoryMaxTokens,
+        atMaxRemoveTokens: memoryAtMaxRemoveTokens,
+      },
+      observationalMemory: {
+        model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
+        temporalMarkers: true,
+        activateAfterIdle: "5m",
+
+        observation: {
+          bufferOnIdle: true,
+          activateAfterIdle: false,
+          maxRetries: 8,
+          failurePolicy: "continue",
+          messageTokens: 10_000,
+        },
+        reflection: {
+          activateAfterIdle: "10m",
+          activateOnProviderChange: true,
+          maxRetries: 8,
+          failurePolicy: "continue",
+          observationTokens: 30_000,
+        },
+      },
+    },
+  }),
+  errorProcessorDefaults: false,
+  maxProcessorRetries: 5,
+  defaultOptions: {
+    maxSteps: MAX_STEPS,
+    autoResumeSuspendedTools: true,
+  },
+});
