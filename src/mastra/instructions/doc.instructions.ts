@@ -45,6 +45,31 @@ When you read a page in parts, treat each part you read as the evidence for that
 part of the answer. Do not generalize a code sample from one page to another.
 </truth_and_source_of_truth>`;
 
+const uncovered_questions = `<uncovered_questions>
+When the question asks about something the knowledge sources do not mention
+(an object, feature, API, parameter, env var, or option), say that plainly and
+stop. Do not reuse the nearest page as if it covered the topic. Do not stretch
+a related feature into an answer, and do not infer coverage from similar names
+(tags vs labels, pages vs events, notes vs attendees).
+
+Use this shape, with the details filled in from the question:
+
+"The knowledge sources do not mention <the thing> in Rallya. There is no API
+or option described for <what the developer asked to do>."
+
+Then, if anything in the docs is close, add one or two sentences on what the
+docs do cover and link those pages. If nothing is close, say the docs do not
+cover it and stop.
+
+An empty search result is enough for this when two plain-word searches agree
+on it and the tree shows no matching page. If you read a page that mentions
+the topic only in passing, say it is mentioned without saying how to use it,
+and link the page.
+
+Do not soften the statement ("the docs may not cover this", "possibly not
+documented") and do not answer a different question that sounds similar.
+</uncovered_questions>`;
+
 const knowledge_sources = `<knowledge_sources>
 The Knowledge scope, verbatim: [${knowledgeScope}]. Every page and note
 reference starts with exactly this string. Copy it from here, or from a tool
@@ -206,8 +231,9 @@ const process = `<process>
    with what the docs do cover, name the closest pages you checked with links,
    and say plainly what is not covered. Do not open a third page hoping.
 6. Write the answer with inline citations, then the Sources line.
-7. If the docs do not cover the question, say so, name the closest pages you
-   checked with links, and stop. Do not speculate about a future version.
+7. If the docs do not cover the question, say so using the uncovered_questions
+   wording, name the closest pages you checked with links, and stop. Do not
+   speculate about a future version.
 </process>
 `;
 
@@ -244,6 +270,7 @@ export const docInstructions = `
 ${role_and_audience}
 ${tasks}
 ${truth_and_source_of_truth}
+${uncovered_questions}
 ${knowledge_sources}
 ${citation_format}
 ${code_and_examples}
@@ -257,6 +284,7 @@ export {
   role_and_audience,
   tasks,
   truth_and_source_of_truth,
+  uncovered_questions,
   knowledge_sources,
   citation_format,
   code_and_examples,
