@@ -23,6 +23,7 @@ import { docsKnowledge } from "./knowledge";
 import { prewarmEmbedder } from "./prewarm";
 import { authFromEnv } from "./auth";
 import { weatherAgent } from "./agents/weather-agent";
+import { customApiRoutes } from "./routes";
 
 // Pay the embedding model's cold-start cost at boot, not at the first search.
 prewarmEmbedder();
@@ -55,7 +56,8 @@ export const mastra = new Mastra({
   // Serves /knowledge/* so the pages show up under Knowledge in Studio.
   // Auth is enabled when DOCS_AGENT_ADMIN_TOKEN / DOCS_AGENT_USER_TOKEN are
   // set (see ./auth.ts); otherwise the server starts without auth.
-  server: { apiRoutes: [...KNOWLEDGE_ROUTES], auth: authFromEnv() },
+  // `customApiRoutes` exposes the public, unauthenticated /docs-chat endpoint.
+  server: { apiRoutes: [...KNOWLEDGE_ROUTES, ...customApiRoutes], auth: authFromEnv() },
   logger: new PinoLogger({
     name: "rallya-docs-agent",
     level: logsLevel,

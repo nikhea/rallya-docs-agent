@@ -20,7 +20,7 @@ import {
 } from "@mastra/core/processors";
 import { EnsureFinalResponseProcessor } from "../processors/ensure-final-response";
 
-const MAX_STEPS = 5;
+const MAX_STEPS = 10;
 /**
  * Answers questions about Rallya from the documentation synced out of Sanity.
  *

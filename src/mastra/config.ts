@@ -42,6 +42,19 @@ export const embedder = {
  */
 export const docsBaseUrl = process.env.DOCS_BASE_URL?.replace(/\/+$/, '');
 
+/**
+ * Origins allowed to call the public `POST /docs-chat` endpoint. Comma-separated;
+ * defaults to `*` because the route is unauthenticated and sets no cookies.
+ * Set e.g. `https://rallya-docs.vercel.app` to restrict browser callers.
+ */
+export const docsChatCorsOrigins = ((): string | string[] => {
+  const configured = process.env.DOCS_CHAT_CORS_ORIGINS?.split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+  return configured && configured.length > 0 ? configured : '*';
+})();
+
 /** How many `knowledge_read` tokens the agent gets per call (see the Knowledge limits docs). */
 export const readMaxTokens = Number(process.env.KNOWLEDGE_READ_MAX_TOKENS ?? 2000);
 

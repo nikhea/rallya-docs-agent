@@ -23,6 +23,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@mastra/ai-sdk": "^1.11.3",
     "@mastra/core": "^1.82.0",
     "@mastra/duckdb": "^1.18.0",
     "@mastra/evals": "^1.10.11",
