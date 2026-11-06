@@ -81,7 +81,7 @@ export const docsAgent = new Agent({
    */
   memory: new Memory({
     options: {
-      lastMessages:20,
+      lastMessages: 20,
       // Name threads after their first question, for the Studio thread list.
       generateTitle: {
         model: "openrouter/openrouter/free",
@@ -91,23 +91,24 @@ export const docsAgent = new Agent({
       //   atMaxRemoveTokens: memoryAtMaxRemoveTokens,
       // },
       observationalMemory: {
-        model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
+        model: "openrouter/openrouter/free",
+        // model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
         temporalMarkers: true,
         activateAfterIdle: "5m",
 
         observation: {
           bufferOnIdle: true,
           activateAfterIdle: false,
-          maxRetries: 8,
+          maxRetries: 3,
           failurePolicy: "continue",
-          messageTokens: 10_000,
+          // messageTokens: 10_000,
         },
         reflection: {
           activateAfterIdle: "10m",
           activateOnProviderChange: true,
-          maxRetries: 8,
+          maxRetries: 3,
           failurePolicy: "continue",
-          observationTokens: 30_000,
+          // observationTokens: 30_000,
         },
       },
       /**
@@ -122,13 +123,15 @@ export const docsAgent = new Agent({
        *
        * Callers must pass `memory: { thread, resource }` or the profile
        * is unavailable (Studio does this automatically; the /docs-chat
-       * client passes its user id as `resource`). resource is not shared
-       * between users, so keep it per person, not per deployment.
+       * route maps the body's `visitor_id` to `resource`, see
+       * ../routes/docs-chat.ts). resource is not shared between users,
+       * so keep it per person, not per deployment.
        */
       workingMemory: {
         enabled: true,
         scope: "resource",
         schema: readerProfileSchema,
+        useStateSignals: true,
       },
     },
   }),

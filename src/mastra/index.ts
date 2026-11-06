@@ -8,6 +8,7 @@ import {
   Observability,
   MastraStorageExporter,
   SensitiveDataFilter,
+  MastraPlatformExporter,
 } from "@mastra/observability";
 import { SamplingStrategyType } from "@mastra/core/observability";
 
@@ -81,13 +82,14 @@ export const mastra = new Mastra({
           enabled: true,
           level: logsLevel,
         },
-        exporters: [new MastraStorageExporter()],
+        exporters: [new MastraStorageExporter(),new MastraPlatformExporter()],
         // Include every internal span (model steps, memory, knowledge tool
         // calls) when reading a trace.
         // includeInternalSpans: traceIncludeInternalSpans,
         // Redact API keys and tokens from span inputs/outputs before storage.
         spanOutputProcessors: [new SensitiveDataFilter()],
       },
+
     },
   }),
 });
