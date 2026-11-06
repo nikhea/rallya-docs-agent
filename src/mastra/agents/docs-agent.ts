@@ -9,6 +9,7 @@ import {
 } from "../config";
 import { docInstructions } from "../instructions/doc.instructions";
 import { docsKnowledge } from "../knowledge";
+import { readerProfileSchema } from "../memory/reader-profile";
 import { citationLinksProcessor } from "../processors/citation-links";
 import {
   BatchPartsProcessor,
@@ -27,7 +28,10 @@ const MAX_STEPS = 10;
  * Knowledge is attached with read-only tools (`knowledge_list`,
  * `knowledge_search`, `knowledge_read`) plus pinned context, so the agent
  * always starts with the docs tree in front of it. Memory is required for
- * pinned context and gives conversations a thread to live in.
+ * pinned context and gives conversations a thread to live in. On top of
+ * message history, the agent keeps a small resource-scoped working-memory
+ * profile of the developer (see ../memory/reader-profile.ts), shared across
+ * all of that user's threads.
  *
  * Instructions live in `../instructions/doc.instructions.ts`, one exported
  * block per concern (role, tasks, truth rules, knowledge sources, citation
@@ -77,14 +81,15 @@ export const docsAgent = new Agent({
    */
   memory: new Memory({
     options: {
+      lastMessages:20,
       // Name threads after their first question, for the Studio thread list.
       generateTitle: {
         model: "openrouter/openrouter/free",
       },
-      messageHistory: {
-        maxTokens: memoryMaxTokens,
-        atMaxRemoveTokens: memoryAtMaxRemoveTokens,
-      },
+      // messageHistory: {
+      //   maxTokens: memoryMaxTokens,
+      //   atMaxRemoveTokens: memoryAtMaxRemoveTokens,
+      // },
       observationalMemory: {
         model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
         temporalMarkers: true,
@@ -104,6 +109,26 @@ export const docsAgent = new Agent({
           failurePolicy: "continue",
           observationTokens: 30_000,
         },
+      },
+      /**
+       * Working memory, resource scope: one small profile per developer
+       * (name, role, preferred language, environment, current project,
+       * recurring topics), shared by every thread that developer opens.
+       * Schema-based, so the agent sends only the fields it is changing
+       * and @mastra/pg merges them inside a row-locked transaction;
+       * concurrent threads never clobber each other's fields. Backed by
+       * the `mastra_resources` table in the same Postgres as the rest of
+       * memory.
+       *
+       * Callers must pass `memory: { thread, resource }` or the profile
+       * is unavailable (Studio does this automatically; the /docs-chat
+       * client passes its user id as `resource`). resource is not shared
+       * between users, so keep it per person, not per deployment.
+       */
+      workingMemory: {
+        enabled: true,
+        scope: "resource",
+        schema: readerProfileSchema,
       },
     },
   }),

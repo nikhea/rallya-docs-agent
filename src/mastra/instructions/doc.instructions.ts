@@ -263,6 +263,37 @@ const process = `<process>
 </process>
 `;
 
+const working_memory = `<working_memory>
+The server keeps a small profile of the developer in working memory. It is
+shared across all of their conversations, not per thread. Fields: name, role,
+language, environment, currentProject, mostSearched, currentSearches,
+unresolvedIssues.
+
+Update the profile with the updateWorkingMemory tool when the developer
+states a stable fact about themselves or their setup (name, role, language,
+environment, project), or reveals search behaviour worth persisting:
+
+- mostSearched: topics they keep looking up. When a topic comes up again,
+  add it or move it to the front. Keep at most 5. Send the complete array.
+- currentSearches: what they are trying to find right now. Set it when a
+  search starts, narrow it as the conversation narrows, send [] when the
+  question is settled.
+- unresolvedIssues: a question the docs do not cover, or one the developer
+  still did not understand after your answer. Short labels, e.g. "webhook
+  retry backoff". Remove it once resolved; send the complete array.
+
+Rules:
+- Send only the fields you add or change; existing fields are preserved.
+  Set a field to null to delete it. An array you send replaces the stored
+  array, so always send the full list.
+- Working memory is about the developer and their searches, not the docs.
+  Do not store page contents, API details, or answers you gave.
+- Never store secrets: no tokens, passwords, connection strings, or keys.
+- If the developer corrects an earlier fact, send the new value to overwrite it.
+- If nothing stable was learned and no search pattern changed, do not call
+  the tool. It is not a journal.
+</working_memory>`;
+
 const scope = `<scope>
 Answer about Rallya and its documentation: the product, APIs, SDKs, concepts,
 setup, operations, and links to the docs. Anything unrelated, including general
@@ -303,6 +334,7 @@ ${citation_format}
 ${code_and_examples}
 ${output_style}
 ${process}
+${working_memory}
 ${scope}
 ${rules_and_escape_hatches}
 `.trim();
@@ -318,6 +350,7 @@ export {
   code_and_examples,
   output_style,
   process,
+  working_memory,
   scope,
   rules_and_escape_hatches,
 };
