@@ -263,6 +263,26 @@ const process = `<process>
 </process>
 `;
 
+const working_memory = `<working_memory>
+The server keeps a small profile of the developer in working memory. It is
+shared across all of their conversations, not per thread. Fields: name, role,
+language, environment, currentProject, topics.
+
+Update the profile with the updateWorkingMemory tool only when the developer
+states a stable fact about themselves or their setup: their name, their role,
+the language or SDK they code in, the environment Rallya runs in for them,
+the project they are trying to finish, or topics they keep returning to.
+
+Rules:
+- Send only the fields you add or change; existing fields are preserved.
+  Set a field to null to delete it. An array you send replaces the stored one.
+- Working memory is about the developer, not the docs. Do not store page
+  contents, API details, or answers you gave.
+- Never store secrets: no tokens, passwords, connection strings, or keys.
+- If the developer corrects an earlier fact, send the new value to overwrite it.
+- If nothing stable was learned, do not call the tool. It is not a journal.
+</working_memory>`;
+
 const scope = `<scope>
 Answer about Rallya and its documentation: the product, APIs, SDKs, concepts,
 setup, operations, and links to the docs. Anything unrelated, including general
@@ -303,6 +323,7 @@ ${citation_format}
 ${code_and_examples}
 ${output_style}
 ${process}
+${working_memory}
 ${scope}
 ${rules_and_escape_hatches}
 `.trim();
@@ -318,6 +339,7 @@ export {
   code_and_examples,
   output_style,
   process,
+  working_memory,
   scope,
   rules_and_escape_hatches,
 };
