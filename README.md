@@ -81,6 +81,22 @@ curl -X POST http://localhost:4111/api/agents/docs-agent/generate \
   -d '{"messages": "Hello"}'
 ```
 
+## Public docs chat endpoint
+
+`POST /docs-chat` streams the docs agent in AI SDK v7 UI-message format (SSE) so the docs site can offer anonymous Q&A. It is **unauthenticated by design**, even when SimpleAuth is configured — every other route remains protected.
+
+```bash
+curl -N -X POST http://localhost:4111/docs-chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"id": "m1", "role": "user", "parts": [{"type": "text", "text": "How do I get started?"}]}]}'
+```
+
+- Implementation: `src/mastra/routes/docs-chat.ts`, registered in `src/mastra/index.ts`.
+- Built with Mastra's `chatRoute()` using AI SDK v7 stream parts, SSE heartbeats every 15 seconds, and a request logger.
+- The start message's `metadata.traceId` carries the run's trace ID, so the docs client can attach feedback to the exact traced response.
+- Route-level CORS handles browser preflights. Set `DOCS_CHAT_CORS_ORIGINS` to a comma-separated allowlist (for example `https://rallya-docs.vercel.app`); it defaults to `*` because the endpoint uses no cookies.
+- The endpoint is public intentionally. Do not use it for private data or privileged actions.
+
 ## Notes
 
 - Knowledge is flagged **alpha** by Mastra: its API can change between releases, and its scopes are not yet a hard isolation boundary. That is fine here, since everything in it is public documentation.
