@@ -77,14 +77,15 @@ export const docsAgent = new Agent({
    */
   memory: new Memory({
     options: {
+      lastMessages:20,
       // Name threads after their first question, for the Studio thread list.
       generateTitle: {
         model: "openrouter/openrouter/free",
       },
-      messageHistory: {
-        maxTokens: memoryMaxTokens,
-        atMaxRemoveTokens: memoryAtMaxRemoveTokens,
-      },
+      // messageHistory: {
+      //   maxTokens: memoryMaxTokens,
+      //   atMaxRemoveTokens: memoryAtMaxRemoveTokens,
+      // },
       observationalMemory: {
         model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
         temporalMarkers: true,
