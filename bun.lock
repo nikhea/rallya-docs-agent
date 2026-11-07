@@ -17,12 +17,12 @@
         "@neon/config": "^1.11.3",
         "@neon/env": "^1.6.15",
         "@sanity/client": "^8.14.1",
+        "mastra": "^1.38.0",
         "zod": "^4",
       },
       "devDependencies": {
         "@types/bun": "latest",
         "@types/node": "^26.6.6",
-        "mastra": "^1.38.0",
         "typescript": "^7.0.2",
       },
       "peerDependencies": {
