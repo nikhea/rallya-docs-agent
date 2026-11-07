@@ -1,11 +1,11 @@
 import { Knowledge, knowledgeMemoryScopes } from '@mastra/core/knowledge';
-import { ModelRouterEmbeddingModel } from '@mastra/core/llm';
-import { PostgresStore, PgVector } from '@mastra/pg';
+// import { ModelRouterEmbeddingModel } from '@mastra/core/llm';
+import { PostgresStore } from '@mastra/pg';
 
 import {
   databaseUrl,
   docsBaseUrl,
-  embedder,
+  // embedder,
   knowledgeScope,
   pinnedMaxTokens,
   readMaxTokens,
@@ -40,8 +40,8 @@ const DOCS_SCOPE = {
  * Postgres-backed Knowledge for the Rallya docs.
  *
  * - `PostgresStore` keeps pages, notes and links.
- * - `PgVector` + an embedder give `knowledge_search` semantic matching on top
- *   of keyword search.
+ * - Semantic matching is disabled: `PgVector` + the embedder are commented out
+ *   below, so `knowledge_search` is keyword-only.
  * - `tools: { read: true }` gives agents only `knowledge_list`,
  *   `knowledge_search` and `knowledge_read`. There are deliberately no write
  *   tools: the agent cannot change the docs; content only changes through
@@ -55,11 +55,11 @@ export const docsKnowledge = new Knowledge({
     id: 'rallya-docs-storage',
     connectionString: databaseUrl,
   }),
-  vector: new PgVector({
-    id: 'rallya-docs-vector',
-    connectionString: databaseUrl,
-  }),
-  embedder: new ModelRouterEmbeddingModel(embedder),
+  // vector: new PgVector({
+  //   id: 'rallya-docs-vector',
+  //   connectionString: databaseUrl,
+  // }),
+  // embedder: new ModelRouterEmbeddingModel(embedder),
   scopes: {
     // resource:<userId> and thread:<threadId>, owned by the run that holds them.
     // `org: false`: there is no tenant here.
