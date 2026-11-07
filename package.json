@@ -22,6 +22,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "bun": "^1.4.4",
     "mastra": "^1.38.0",
     "@mastra/ai-sdk": "^1.11.3",
     "@mastra/core": "^1.82.0",
