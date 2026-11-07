@@ -42,6 +42,7 @@ dist
 *.db-*
 .netlify
 .vercel
+.opencode
 *.duckdb
 *.duckdb.wal
 .neon
