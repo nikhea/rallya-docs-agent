@@ -16,7 +16,7 @@ Mastra Knowledge  "docs:rallya"  ← Postgres (PostgresStore) + pgvector
 docs-agent: knowledge_list, knowledge_search, knowledge_read
         │
         ▼
-traces + logs: DuckDB (mastra.duckdb), read in Studio > Observability
+traces + logs: DuckDB locally, Postgres in production, read in Studio > Observability
 ```
 
 - `src/mastra/knowledge/index.ts`: the `Knowledge` instance: `docs:$siteId` scope, pinned docs tree, read-only tools, and the Sanity to Knowledge sync.
@@ -24,7 +24,7 @@ traces + logs: DuckDB (mastra.duckdb), read in Studio > Observability
 - `src/mastra/instructions/doc.instructions.ts`: the system prompt, one exported block per concern (role, tasks, truth rules, knowledge sources, citation format, style, process, scope, rules) joined into `docInstructions`.
 - `src/mastra/lib/sanity.ts`: Sanity client and the `docPage` / `docSection` queries.
 - `scripts/sync-sanity.ts`: the sync CLI.
-- `src/mastra/index.ts`: composite storage (Postgres + DuckDB), logging and tracing.
+- `src/mastra/index.ts`: composite storage (Postgres app + DuckDB or Postgres observability), logging and tracing.
 
 Each Sanity `docPage` becomes a page `docs:rallya#<slug>` (slashes flattened, so `api/keys` becomes `docs:rallya#api-keys`). Sections are summarised on `docs:rallya#docs-structure`. Bodies are the MDX from the Studio, verbatim.
 
@@ -97,15 +97,34 @@ curl -N -X POST http://localhost:4111/docs-chat \
 - Route-level CORS handles browser preflights. Set `DOCS_CHAT_CORS_ORIGINS` to a comma-separated allowlist (for example `https://rallya-docs.vercel.app`); it defaults to `*` because the endpoint uses no cookies.
 - The endpoint is public intentionally. Do not use it for private data or privileged actions.
 
+### Feedback
+
+`POST /docs-feedback` records thumbs, ratings or comments against a `/docs-chat` trace. Pass the `metadata.traceId` the client received on the stream's start part:
+
+```bash
+curl -X POST http://localhost:4111/docs-feedback \
+  -H "Content-Type: application/json" \
+  -d '{"traceId": "<trace-id>", "feedbackType": "comment", "value": "Very helpful"}'
+```
+
+Body fields: `traceId` (required), `spanId` (optional), `feedbackType` (default `thumbs`), `value` (number or string, required), `comment`, and `feedbackUserId`. It returns `200 {"success":true}`, `404` when the trace or span is not in observability storage, or `400` for a bad body.
+
+Use this route rather than Studio's feedback box when the data must reach Mastra Platform. Studio's box writes straight to the runtime's observability store, which never reaches the Platform because it bypasses the observability event bus. `/docs-feedback` goes through `mastra.observability.addFeedback()` → `MastraPlatformExporter`, so the record appears in Studio and the Platform feedback API. See `src/mastra/routes/docs-feedback.ts`.
+
 ## Notes
 
 - Knowledge is flagged **alpha** by Mastra: its API can change between releases, and its scopes are not yet a hard isolation boundary. That is fine here, since everything in it is public documentation.
 - Memory stores conversations in the same Postgres database. History is bounded by a **token budget** (`MEMORY_MAX_TOKENS`, default 32000; `MEMORY_AT_MAX_REMOVE_TOKENS`, default 8000) instead of a message count, because one `knowledge_read` can add thousands of tokens. `generateTitle: true` names threads after their first question.
+
 ## Observability
 
-Tracing and logging are configured in `src/mastra/index.ts` and store everything in DuckDB (`mastra.duckdb`), the recommended local-dev observability backend.
+Tracing and logging are configured in `src/mastra/index.ts`. The store follows `OBSERVABILITY_STORAGE`: DuckDB locally, Postgres in production.
 
-- **Storage:** `MastraCompositeStore` with `PostgresStore` as the default domain (threads, messages, Knowledge) and `DuckDBStore().observability` for traces, logs and metrics. For production, swap the DuckDB domain for ClickHouse; DuckDB is embedded and file-based.
+- **Storage:** `MastraCompositeStore` with `PostgresStore` as the default domain (threads, messages, Knowledge). The observability domain (traces, logs, metrics, scores, feedback) is chosen by `OBSERVABILITY_STORAGE`:
+  - `duckdb` (default): `DuckDBStore().observability`, an embedded file at `DUCKDB_PATH` (default `mastra.duckdb`). Good for local development.
+  - `postgres`: `ObservabilityStoragePostgresVNext`, writing to its own schema (`OBSERVABILITY_SCHEMA`, default `mastra_observability`) and optionally its own database (`OBSERVABILITY_DATABASE_URL`, which defaults to `DATABASE_URL`). Set this in the deployed environment. For high-volume workloads, swap this domain for ClickHouse.
+- **Why Postgres in production:** `POST /docs-feedback` calls `addFeedback()`, which rehydrates the target trace from observability storage before emitting the feedback event. A shared, durable store is what makes that lookup reliable after a redeploy or on another instance.
+- **Partitions:** the v-next domain partitions by day. Without TimescaleDB or pg_partman it pre-creates yesterday through today + `OBSERVABILITY_PARTITION_FUTURE_DAYS` (default 30) on `init()`. Call `ensurePartitions()` from a scheduled job if a single instance runs longer than that window.
 - **Tracing:** every run is sampled (`SamplingStrategyType.ALWAYS`), internal spans are kept (`includeInternalSpans`), and `SensitiveDataFilter` redacts API keys and tokens from span inputs/outputs before they are stored.
 - **Logging:** `PinoLogger` writes every level at or above `LOG_LEVEL`; records are also exported into observability, and `loggerOptions.correlation` adds `trace_id`/`span_id` to log lines written inside a run, step or tool, so a stdout line points at its trace.
 - **Reading them:** open Studio > Observability for the trace list and spans, or use the CLI:
@@ -115,7 +134,7 @@ Tracing and logging are configured in `src/mastra/index.ts` and store everything
   npx mastra api log list '{"level":"error","page":0,"perPage":50}'
   ```
 
-  Both need the dev server running (`bun run dev`). You can also query the file directly: `duckdb mastra.duckdb "select * from spans limit 5"`.
+  Both need the dev server running (`bun run dev`). With `OBSERVABILITY_STORAGE=postgres` you can also query the tables directly, e.g. `psql "$DATABASE_URL" -c 'select * from mastra_observability.span_events limit 5'`; with `duckdb` the data is in `mastra.duckdb`.
 
 `LOG_PRETTY=false` switches the console to JSON lines for log aggregators.
 

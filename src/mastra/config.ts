@@ -72,12 +72,50 @@ export const memoryMaxTokens = Number(process.env.MEMORY_MAX_TOKENS ?? 32_000);
 export const memoryAtMaxRemoveTokens = Number(process.env.MEMORY_AT_MAX_REMOVE_TOKENS ?? 8_000);
 
 /**
- * DuckDB file for observability (traces, logs, metrics). DuckDB is embedded
+ * Where observability data (traces, logs, metrics, scores and feedback) lives.
+ *
+ * - `duckdb` (default): embedded file, ideal for local development.
+ * - `postgres`: `ObservabilityStoragePostgresVNext`, for production. Traces
+ *   survive restarts and every instance shares one store, which is what makes
+ *   `addFeedback()` able to rehydrate a trace by id.
+ *
+ * Set `OBSERVABILITY_STORAGE=postgres` in the deployed environment.
+ */
+export const observabilityStorage =
+  process.env.OBSERVABILITY_STORAGE === 'postgres' ? 'postgres' as const : 'duckdb' as const;
+
+/**
+ * DuckDB file used when `observabilityStorage` is `duckdb`. DuckDB is embedded
  * and file-based; keep it on local disk, never on an ephemeral filesystem.
  * Resolved against the project root because the dev server's working
  * directory is `src/mastra/public`.
  */
 export const duckdbPath = process.env.DUCKDB_PATH ?? fileURLToPath(new URL('../../mastra.duckdb', import.meta.url));
+
+/**
+ * Postgres connection used when `observabilityStorage` is `postgres`.
+ * Defaults to `DATABASE_URL` so the switch needs one variable, but production
+ * should point this at a dedicated database/branch: the v-next domain is
+ * append-only and write-heavy, and sharing it with the app database degrades
+ * query latency.
+ */
+export const observabilityDatabaseUrl =
+  process.env.OBSERVABILITY_DATABASE_URL ?? databaseUrl;
+
+/** Schema inside the observability database that holds the signal tables. */
+export const observabilitySchema =
+  process.env.OBSERVABILITY_SCHEMA ?? 'mastra_observability';
+
+/**
+ * Days of daily partitions to pre-create. The Postgres observability domain
+ * partitions by day; without TimescaleDB or pg_partman it pre-creates
+ * yesterday through today + N days on init(), and extends on demand inside
+ * that window. Re-init happens on every deploy; call `ensurePartitions()` from
+ * a scheduled job if a single instance runs longer than this window.
+ */
+export const observabilityPartitionFutureDays = Number(
+  process.env.OBSERVABILITY_PARTITION_FUTURE_DAYS ?? 30,
+);
 
 /** Console log level: debug | info | warn | error (Mastra's level set). */
 export const logsLevel = (process.env.LOG_LEVEL ?? 'info') as 'debug' | 'info' | 'warn' | 'error';
