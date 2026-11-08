@@ -1,7 +1,10 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
-import { PostgresStore } from "@mastra/pg";
 import { DuckDBStore } from "@mastra/duckdb";
+import {
+  ObservabilityStoragePostgresVNext,
+  PostgresStore,
+} from "@mastra/pg";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { KNOWLEDGE_ROUTES } from "@mastra/server/server-adapter";
 import {
@@ -17,6 +20,10 @@ import {
   duckdbPath,
   logsLevel,
   logsPrettyPrint,
+  observabilityDatabaseUrl,
+  observabilityPartitionFutureDays,
+  observabilitySchema,
+  observabilityStorage,
   traceIncludeInternalSpans,
 } from "./config";
 import { docsAgent } from "./agents/docs-agent";
@@ -30,11 +37,37 @@ import { customApiRoutes } from "./routes";
 prewarmEmbedder();
 
 /**
- * Composite storage: Postgres keeps threads, messages and Knowledge; DuckDB
- * keeps observability (traces, logs, metrics) in a local analytical file.
- * DuckDB is the recommended local-dev observability store — for production,
- * swap this domain for ClickHouse.
+ * Composite storage: Postgres keeps threads, messages and Knowledge.
+ * Observability (traces, logs, metrics, scores, feedback) follows
+ * `OBSERVABILITY_STORAGE`:
+ *
+ * - `duckdb` (default): an embedded file, right for local development.
+ * - `postgres`: the v-next Postgres domain, right for production. It is
+ *   durable, so `addFeedback()` can rehydrate the target trace after a
+ *   restart or on another instance. For higher volume, swap it for ClickHouse.
  */
+const observabilityDomain =
+  observabilityStorage === "postgres"
+    ? new ObservabilityStoragePostgresVNext({
+        connectionString: observabilityDatabaseUrl,
+        schemaName: observabilitySchema,
+        partitioning: { futureDays: observabilityPartitionFutureDays },
+      })
+    : new DuckDBStore({
+        id: "rallya-docs-duckdb",
+        path: duckdbPath,
+      }).observability;
+
+// `NODE_ENV` is not trustworthy here: the local `.env` sets it to `production`.
+// Warn only on the markers the real deployments actually set (Cloud Run and
+// Railway), so local `bun run dev` stays quiet.
+const deployed = Boolean(process.env.K_SERVICE ?? process.env.RAILWAY_ENVIRONMENT);
+if (deployed && observabilityStorage === "duckdb") {
+  console.warn(
+    "[observability] OBSERVABILITY_STORAGE is not postgres. Traces and feedback will not survive restarts, and POST /docs-feedback cannot rehydrate traces.",
+  );
+}
+
 const storage = new MastraCompositeStore({
   id: "rallya-docs-storage",
   // Default domain: threads, messages, workflows, agents.
@@ -43,10 +76,7 @@ const storage = new MastraCompositeStore({
     connectionString: databaseUrl,
   }),
   domains: {
-    observability: new DuckDBStore({
-      id: "rallya-docs-duckdb",
-      path: duckdbPath,
-    }).observability,
+    observability: observabilityDomain,
   },
 });
 
@@ -69,7 +99,7 @@ export const mastra = new Mastra({
     // Adds trace_id/span_id to every log line written inside a run/step/tool,
     // so a stdout line can be matched to its trace in Studio.
     correlation: true,
-    // Also store log records in observability (DuckDB) for `mastra api log`.
+    // Also store log records in observability for `mastra api log`.
     export: true,
   },
   observability: new Observability({

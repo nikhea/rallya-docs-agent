@@ -25,20 +25,10 @@ import { chatRoute } from "@mastra/ai-sdk";
 import type { ApiRoute, MiddlewareHandler } from "@mastra/core/server";
 
 import { docsChatCorsOrigins } from "../config";
+import { isValidId } from "./ids";
 
 /** SSE comment every 15s while the stream is idle (see withSseHeartbeat). */
 const HEARTBEAT_MS = 15_000;
-
-/**
- * Validate an id taken from the JSON body: non-empty after trimming,
- * at most 128 chars, no control characters.
- */
-const isValidId = (value: unknown): value is string =>
-  typeof value === "string" &&
-  value.trim().length > 0 &&
-  value.trim().length <= 128 &&
-  // eslint-disable-next-line no-control-regex
-  !/[\x00-\x1f\x7f]/.test(value);
 
 /**
  * Rewrite the cached body so the chatRoute handler parses the mutated
