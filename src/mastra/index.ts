@@ -1,10 +1,7 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
 import { DuckDBStore } from "@mastra/duckdb";
-import {
-  ObservabilityStoragePostgresVNext,
-  PostgresStore,
-} from "@mastra/pg";
+import { ObservabilityStoragePostgresVNext, PostgresStore } from "@mastra/pg";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { KNOWLEDGE_ROUTES } from "@mastra/server/server-adapter";
 import {
@@ -51,7 +48,16 @@ const observabilityDomain =
     ? new ObservabilityStoragePostgresVNext({
         connectionString: observabilityDatabaseUrl,
         schemaName: observabilitySchema,
-        partitioning: { futureDays: observabilityPartitionFutureDays },
+        // Pin native partitioning. Neon ships pg_partman with
+        // `pg_partman_bgw.role = postgres`, a role that does not exist in the
+        // database, and the GUC is SUSET so it cannot be fixed from a normal
+        // connection. The result is that `partman.run_maintenance()` is a no-op
+        // and partitions silently stop being created. Native mode lets the
+        // domain create day partitions itself on init and on demand.
+        partitioning: {
+          mode: "native",
+          futureDays: observabilityPartitionFutureDays,
+        },
       })
     : new DuckDBStore({
         id: "rallya-docs-duckdb",
@@ -61,7 +67,9 @@ const observabilityDomain =
 // `NODE_ENV` is not trustworthy here: the local `.env` sets it to `production`.
 // Warn only on the markers the real deployments actually set (Cloud Run and
 // Railway), so local `bun run dev` stays quiet.
-const deployed = Boolean(process.env.K_SERVICE ?? process.env.RAILWAY_ENVIRONMENT);
+const deployed = Boolean(
+  process.env.K_SERVICE ?? process.env.RAILWAY_ENVIRONMENT,
+);
 if (deployed && observabilityStorage === "duckdb") {
   console.warn(
     "[observability] OBSERVABILITY_STORAGE is not postgres. Traces and feedback will not survive restarts, and POST /docs-feedback cannot rehydrate traces.",
@@ -88,7 +96,10 @@ export const mastra = new Mastra({
   // Auth is enabled when DOCS_AGENT_ADMIN_TOKEN / DOCS_AGENT_USER_TOKEN are
   // set (see ./auth.ts); otherwise the server starts without auth.
   // `customApiRoutes` exposes the public, unauthenticated /docs-chat endpoint.
-  server: { apiRoutes: [...KNOWLEDGE_ROUTES, ...customApiRoutes], auth: authFromEnv() },
+  server: {
+    apiRoutes: [...KNOWLEDGE_ROUTES, ...customApiRoutes],
+    auth: authFromEnv(),
+  },
   logger: new PinoLogger({
     name: "rallya-docs-agent",
     level: logsLevel,
@@ -112,14 +123,51 @@ export const mastra = new Mastra({
           enabled: true,
           level: logsLevel,
         },
-        exporters: [new MastraStorageExporter(),new MastraPlatformExporter()],
+        exporters: [new MastraStorageExporter(), new MastraPlatformExporter()],
         // Include every internal span (model steps, memory, knowledge tool
         // calls) when reading a trace.
         // includeInternalSpans: traceIncludeInternalSpans,
         // Redact API keys and tokens from span inputs/outputs before storage.
         spanOutputProcessors: [new SensitiveDataFilter()],
       },
-
     },
   }),
 });
+
+// const observability = await mastra.getStorage()!.getStore("observability");
+
+// if (!mastra.observability.addFeedback) {
+//   throw new Error(
+//     "Feedback is not supported by the active observability implementation",
+//   );
+// }
+
+// const saved = await mastra.observability.addFeedback({
+//   traceId: "aaa5297abac0f39c5b5926a00e752126",
+//   // spanId: 'span-456',
+//   feedback: {
+//     feedbackSource: "user",
+//     feedbackType: "rating",
+//     value: 1,
+//     comment: "The answer solved my issue.",
+//   },
+// });
+
+// console.log({
+//   mssage: "Feedback saved",
+//   data: saved,
+// });
+
+// const result = await observability!.listFeedback({
+//   filters: {
+//     feedbackType: "rating",
+//     feedbackSource: "user",
+//     timestamp: { start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+//   },
+//   pagination: { page: 0, perPage: 20 },
+//   orderBy: { field: "timestamp", direction: "DESC" },
+// });
+
+// console.log(result.feedback, result.pagination?.hasMore);
+
+// aaa5297abac0f39c5b5926a00e752126

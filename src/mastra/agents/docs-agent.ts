@@ -44,7 +44,8 @@ export const docsAgent = new Agent({
     "Answers questions about Rallya using the official documentation.",
   instructions: docInstructions,
   // Chat model comes from DOCS_AGENT_MODEL (see ../config.ts); no hardcoding.
-  model: agentModel,
+  model: "openrouter/openrouter/free",
+  // agentModel,
   // Deterministic backstop: rewrite the bracketed page markers / bare Sources
   // lines the model sometimes emits into proper markdown links (see the file).
   inputProcessors: [
@@ -90,27 +91,27 @@ export const docsAgent = new Agent({
       //   maxTokens: memoryMaxTokens,
       //   atMaxRemoveTokens: memoryAtMaxRemoveTokens,
       // },
-      observationalMemory: {
-        model: "openrouter/openrouter/free",
-        // model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
-        temporalMarkers: true,
-        activateAfterIdle: "5m",
+      // observationalMemory: {
+      // model: "openrouter/openrouter/free",
+      // model: "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
+      // temporalMarkers: true,
+      // activateAfterIdle: "5m",
 
-        observation: {
-          bufferOnIdle: true,
-          activateAfterIdle: false,
-          maxRetries: 3,
-          failurePolicy: "continue",
-          // messageTokens: 10_000,
-        },
-        reflection: {
-          activateAfterIdle: "10m",
-          activateOnProviderChange: true,
-          maxRetries: 3,
-          failurePolicy: "continue",
-          // observationTokens: 30_000,
-        },
-      },
+      // observation: {
+      // bufferOnIdle: true,
+      // activateAfterIdle: false,
+      // maxRetries: 3,
+      // failurePolicy: "continue",
+      // messageTokens: 10_000,
+      // },
+      // reflection: {
+      // activateAfterIdle: "10m",
+      // activateOnProviderChange: true,
+      // maxRetries: 3,
+      // failurePolicy: "continue",
+      // observationTokens: 30_000,
+      // },
+      // },
       /**
        * Working memory, resource scope: one small profile per developer
        * (name, role, preferred language, environment, current project,
