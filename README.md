@@ -124,7 +124,8 @@ Tracing and logging are configured in `src/mastra/index.ts`. The store follows `
   - `duckdb` (default): `DuckDBStore().observability`, an embedded file at `DUCKDB_PATH` (default `mastra.duckdb`). Good for local development.
   - `postgres`: `ObservabilityStoragePostgresVNext`, writing to its own schema (`OBSERVABILITY_SCHEMA`, default `mastra_observability`) and optionally its own database (`OBSERVABILITY_DATABASE_URL`, which defaults to `DATABASE_URL`). Set this in the deployed environment. For high-volume workloads, swap this domain for ClickHouse.
 - **Why Postgres in production:** `POST /docs-feedback` calls `addFeedback()`, which rehydrates the target trace from observability storage before emitting the feedback event. A shared, durable store is what makes that lookup reliable after a redeploy or on another instance.
-- **Partitions:** the v-next domain partitions by day. Without TimescaleDB or pg_partman it pre-creates yesterday through today + `OBSERVABILITY_PARTITION_FUTURE_DAYS` (default 30) on `init()`. Call `ensurePartitions()` from a scheduled job if a single instance runs longer than that window.
+- **Partitions:** the v-next domain partitions by day and is pinned to `partitioning: { mode: "native" }`, so it pre-creates yesterday through today + `OBSERVABILITY_PARTITION_FUTURE_DAYS` (default 30) on `init()`. pg_partman is installed on Neon but unusable there: its background worker runs as `pg_partman_bgw.role = postgres`, a role that does not exist, and the GUC is SUSET, so `partman.run_maintenance()` never creates anything. Nothing prunes old partitions yet; enable `pg_cron` in the Neon console (or add a job) if retention matters.
+- **Platform export:** the config sets `retainStorageExporterOnPlatform: true`. Mastra Platform drops `MastraStorageExporter` by default when deploying, which leaves `getRecordedTrace()` with nothing to read and makes `/docs-feedback` return 404.
 - **Tracing:** every run is sampled (`SamplingStrategyType.ALWAYS`), internal spans are kept (`includeInternalSpans`), and `SensitiveDataFilter` redacts API keys and tokens from span inputs/outputs before they are stored.
 - **Logging:** `PinoLogger` writes every level at or above `LOG_LEVEL`; records are also exported into observability, and `loggerOptions.correlation` adds `trace_id`/`span_id` to log lines written inside a run, step or tool, so a stdout line points at its trace.
 - **Reading them:** open Studio > Observability for the trace list and spans, or use the CLI:
@@ -134,7 +135,20 @@ Tracing and logging are configured in `src/mastra/index.ts`. The store follows `
   npx mastra api log list '{"level":"error","page":0,"perPage":50}'
   ```
 
-  Both need the dev server running (`bun run dev`). With `OBSERVABILITY_STORAGE=postgres` you can also query the tables directly, e.g. `psql "$DATABASE_URL" -c 'select * from mastra_observability.span_events limit 5'`; with `duckdb` the data is in `mastra.duckdb`.
+  Both need the dev server running (`bun run dev`). With `OBSERVABILITY_STORAGE=postgres` you can also query the tables directly, e.g. `psql "$DATABASE_URL" -c 'select * from mastra_observability.mastra_span_events limit 5'`; with `duckdb` the data is in `mastra.duckdb`.
+
+## Deploying
+
+`mastra deploy --env production` reads `.env.<environment>` before `.env`, and pushes whatever it finds into the platform environment record. Because `.env` holds local-development values (notably `localhost` for `DATABASE_URL`), the repository keeps an intentional `.env.production` with no variables in it: production values live in the Mastra Platform environment record, and a deploy then leaves them untouched. Set or change them with `mastra env set` or the dashboard.
+
+```bash
+set -a && . ./.env && set +a
+MASTRA_API_TOKEN="$MASTRA_PLATFORM_ACCESS_TOKEN" MASTRA_ORG_ID=<org> MASTRA_PROJECT_ID=<project> \
+  npx mastra deploy --env production --project <project> --skip-preflight -y
+```
+
+`--skip-preflight` is needed with an empty env file: preflight treats every `process.env` reference as required from the file being deployed, even when the variable has a fallback or already exists on the environment.
+
 
 `LOG_PRETTY=false` switches the console to JSON lines for log aggregators.
 

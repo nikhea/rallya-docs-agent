@@ -30,6 +30,21 @@ import { authFromEnv } from "./auth";
 import { weatherAgent } from "./agents/weather-agent";
 import { customApiRoutes } from "./routes";
 
+/**
+ * One-line boot diagnostic. The platform injects env vars, and the config
+ * fallbacks point at localhost, so a variable that never arrived looks like a
+ * network outage later in the log. Report presence only, never values.
+ */
+const envPresence = [
+  "DATABASE_URL",
+  "OBSERVABILITY_STORAGE",
+  "OBSERVABILITY_DATABASE_URL",
+  "GROQ_API_KEY",
+  "RAILWAY_ENVIRONMENT",
+  "K_SERVICE",
+].map(key => `${key}=${process.env[key] ? "set" : "missing"}`);
+console.info(`[boot] ${envPresence.join(" ")} envCount=${Object.keys(process.env).length}`);
+
 // Pay the embedding model's cold-start cost at boot, not at the first search.
 prewarmEmbedder();
 
@@ -124,6 +139,12 @@ export const mastra = new Mastra({
           level: logsLevel,
         },
         exporters: [new MastraStorageExporter(), new MastraPlatformExporter()],
+        // Mastra Platform skips MastraStorageExporter by default so hosted
+        // projects don't write observability twice. We need it: POST
+        // /docs-feedback rehydrates the trace from our own observability
+        // storage (getRecordedTrace) before adding feedback, and only
+        // storage-backed traces can be rehydrated.
+        retainStorageExporterOnPlatform: true,
         // Include every internal span (model steps, memory, knowledge tool
         // calls) when reading a trace.
         // includeInternalSpans: traceIncludeInternalSpans,
