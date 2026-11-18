@@ -6,7 +6,19 @@ Companion: `plan/knowledge-auto-sync.md`
 Rule: one commit per step, each independently reviewable and green. No code in
 this document — it is the implementation checklist.
 
-Progress: not started.
+Progress: steps 1–9 implemented and committed on `feat/knowledge-auto-sync`
+(agent) and `feat/docs-agent-dispatch` (docs). Step 10 local verification
+passed; the four production checks are pending the merges.
+
+Deviations from the original notes:
+- The agent sync reports **22** unchanged Knowledge pages (21 doc pages + the
+  sections page), not 24. 24 is the count of Sanity documents (21 pages + 3
+  sections). The plans and runbook now use the correct numbers.
+- The `Notify docs agent` step also checks that `DOCS_AGENT_DISPATCH_TOKEN` is
+  set before curling, so a missing PAT produces a clear annotation instead of a
+  401 from GitHub.
+- The docs sync only emits `docs_changed` on apply runs; `--check` and
+  `--dry-run` deliberately emit nothing.
 
 Order matters: `repository_dispatch` only triggers workflows that exist on the
 agent repo's default branch, so steps 1–5 must merge to `main` before step 8 can
@@ -242,10 +254,16 @@ fire successfully.
 - Update this file's `Progress:` line and any deviation notes.
 
 **Verify**
-- All four results are quoted with the run ids or timestamps.
+- All local checks passed (see the Verification section in
+  `plan/knowledge-auto-sync.md`): `docs_changed=0` on an apply no-op, no output
+  from `--check` / `--dry-run`, eslint clean, both YAMLs parse, agent sync
+  idempotent (`0 created, 0 updated, 22 unchanged`) against local Postgres.
+- The four production checks need the branches merged to `main` first; they are
+  listed as pending in the companion plan with the exact expected log lines.
 
 **Done when**
-- Both plan files describe shipped behaviour, not intentions.
+- Both plan files describe shipped behaviour and record the local results; the
+  remaining production results are filled in after the merges.
 
 ---
 

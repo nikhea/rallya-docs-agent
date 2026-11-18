@@ -1,6 +1,8 @@
 # Knowledge auto-sync on docs publish
 
-Status: planned (no implementation yet)
+Status: implemented on `feat/knowledge-auto-sync` (`rallya-docs-agent`) and
+`feat/docs-agent-dispatch` (`rallya-docs`). Local verification passed; the
+production end-to-end checks run after both branches merge.
 Repos: `rallya-docs-agent` (Phase A), `rallya-docs` (Phase B)
 Scope: wire the existing Sanity → Knowledge sync to run after a successful docs
 publish. No changes to the agent's prompts, tools, or runtime behaviour.
@@ -77,7 +79,9 @@ repo's default branch.
    the agent.
 5. Update `README.md` with an "Automatic re-sync" section.
 6. Merge to `main`, then run the workflow once via `workflow_dispatch`.
-   - Expected: `0 created, 0 updated, 24 unchanged` — proves idempotence and DB
+   - Expected: `0 created, 0 updated, 22 unchanged` — 21 doc pages plus the
+     sections page in the `docs:rallya` Knowledge scope (Sanity itself holds 24
+     documents: 21 pages + 3 sections). This proves idempotence and DB
      connectivity before anything depends on it.
 
 ## Phase B — `rallya-docs`
@@ -112,11 +116,27 @@ repo's default branch.
 
 ## Verification
 
-1. Agent workflow manual run → `0 created, 0 updated, 24 unchanged`.
+Local checks (run 2026-11-18, all passed):
+
+1. `GITHUB_OUTPUT=/tmp/out bun scripts/sync-docs-to-sanity.mjs --check` → no output file written.
+2. `GITHUB_OUTPUT=/tmp/out bun scripts/sync-docs-to-sanity.mjs --dry-run` →
+   `0 to write, 24 unchanged, 0 to delete`, no output file written.
+3. `GITHUB_OUTPUT=/tmp/out bun scripts/sync-docs-to-sanity.mjs --prune` →
+   `Nothing to do.`, output file contains `docs_changed=0`.
+4. `bunx eslint scripts/sync-docs-to-sanity.mjs` → exit 0.
+5. Both workflows parse as YAML; `Notify docs agent` is the last step and is
+   guarded by `steps.sync.outputs.docs_changed != '0'`.
+6. Agent sync against a local Postgres: `Sanity returned 21 page(s) and 3
+   section(s).`, `Synced: 0 created, 0 updated, 22 unchanged.` — confirms the
+   Sanity read token and idempotence.
+
+Production checks (after both branches merge, still pending):
+
+1. Agent workflow manual run → `0 created, 0 updated, 22 unchanged` against the
+   Neon database.
 2. Edit one page in `content/docs` → merge → docs workflow green → agent run
-   reports `1 updated, 23 unchanged`.
-3. Delete a page → merge → agent log shows
-   `removed docs:rallya#<slug>`.
+   reports `1 updated, 21 unchanged` and the dispatch response is `204`.
+3. Delete one page → merge → agent log shows `removed docs:rallya#<slug>`.
 4. Ask the deployed assistant a question answered by the edited page to confirm
    the new content is searchable.
 
