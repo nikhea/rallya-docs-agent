@@ -34,6 +34,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check required secrets
+        run: |
+          test -n "$DATABASE_URL" || { echo "::error::DATABASE_URL is not configured"; exit 1; }
+          test -n "$SANITY_API_READ_TOKEN" || { echo "::error::SANITY_API_READ_TOKEN is not configured"; exit 1; }
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.4"
