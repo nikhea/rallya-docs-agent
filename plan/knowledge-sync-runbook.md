@@ -34,6 +34,12 @@ Configured under **Settings > Secrets and variables > Actions** in
 Never print either secret. To rotate, set a new value with
 `gh secret set <NAME> --repo nikhea/rallya-docs-agent` and re-run the workflow.
 
+`DOCS_AGENT_DISPATCH_TOKEN` lives in the `rallya-docs` repo, not here. It is
+currently the maintainer's `gh` OAuth token (`repo`, `read:org`, `gist` scopes),
+because GitHub provides no CLI/API to create a fine-grained PAT. Rotate it to a
+fine-grained PAT scoped to `rallya-docs-agent` with Contents: read/write when
+convenient.
+
 ## Neon connectivity
 
 Neon accepts connections from GitHub-hosted runners unless **IP Allow** is
