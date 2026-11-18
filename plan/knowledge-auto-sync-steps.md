@@ -6,9 +6,9 @@ Companion: `plan/knowledge-auto-sync.md`
 Rule: one commit per step, each independently reviewable and green. No code in
 this document — it is the implementation checklist.
 
-Progress: steps 1–9 implemented and committed on `feat/knowledge-auto-sync`
-(agent) and `feat/docs-agent-dispatch` (docs). Step 10 local verification
-passed; the four production checks are pending the merges.
+Progress: all 10 steps implemented, committed and merged to `main` in both
+repos (`rallya-docs-agent#10`, `rallya-docs#8`). All local and production
+checks passed; smoke-test content was reverted.
 
 Deviations from the original notes:
 - The agent sync reports **22** unchanged Knowledge pages (21 doc pages + the
@@ -19,6 +19,11 @@ Deviations from the original notes:
   401 from GitHub.
 - The docs sync only emits `docs_changed` on apply runs; `--check` and
   `--dry-run` deliberately emit nothing.
+- `DOCS_AGENT_DISPATCH_TOKEN` is the existing `gh` OAuth token (`repo` scope),
+  not a fine-grained PAT — GitHub exposes no CLI/API to mint one. It works, but
+  should be rotated to a Contents-only PAT for `rallya-docs-agent`.
+- The first production agent run updated 21 stale pages (a one-time catch-up);
+  every run since has reported all 22 Knowledge pages unchanged.
 
 Order matters: `repository_dispatch` only triggers workflows that exist on the
 agent repo's default branch, so steps 1–5 must merge to `main` before step 8 can
@@ -244,26 +249,29 @@ fire successfully.
 - `plan/knowledge-auto-sync-steps.md` (this file)
 
 **Work**
-- Run the end-to-end checks and record each result:
-  1. Agent workflow manual run → `0 created, 0 updated, 24 unchanged`.
-  2. Edit one page in `content/docs` → merge → docs workflow green → agent run
-     reports `1 updated, 23 unchanged`.
-  3. Delete one page → merge → agent log shows `removed docs:rallya#<slug>`.
-  4. Ask the deployed assistant a question answered by the edited page and
-     confirm the answer reflects the new content.
-- Update this file's `Progress:` line and any deviation notes.
+- Ran the end-to-end checks and recorded each result:
+  1. Agent manual run `44337782246` → `0 created, 0 updated, 22 unchanged` (after
+     the one-time catch-up in `44337484560`).
+  2. Marker added to `llms-txt.mdx` (`rallya-docs#9`) → docs run `44338352224`
+     green, dispatch fired, agent run `44338449378` → `0 created, 1 updated, 21
+     unchanged`.
+  3. Temporary page removed (`rallya-docs#11`) → docs run `44339743334` deleted
+     `docPage.sync-smoke-test`, agent run `44339827722` logged
+     `removed docs:rallya#sync-smoke-test`.
+  4. `/docs-chat` answered `BLUEBERRY-7` (trace
+     `5453850e20c4a7ea963b139de10146d3`).
+- Updated the `Progress:` line and deviation notes in both plan files.
 
 **Verify**
 - All local checks passed (see the Verification section in
   `plan/knowledge-auto-sync.md`): `docs_changed=0` on an apply no-op, no output
   from `--check` / `--dry-run`, eslint clean, both YAMLs parse, agent sync
   idempotent (`0 created, 0 updated, 22 unchanged`) against local Postgres.
-- The four production checks need the branches merged to `main` first; they are
-  listed as pending in the companion plan with the exact expected log lines.
+- All four production checks passed with the run ids quoted above.
 
 **Done when**
-- Both plan files describe shipped behaviour and record the local results; the
-  remaining production results are filled in after the merges.
+- Both plan files describe shipped behaviour with the actual run ids; the
+  smoke-test content has been reverted and both repos are back to normal.
 
 ---
 

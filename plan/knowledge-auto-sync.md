@@ -1,8 +1,6 @@
 # Knowledge auto-sync on docs publish
 
-Status: implemented on `feat/knowledge-auto-sync` (`rallya-docs-agent`) and
-`feat/docs-agent-dispatch` (`rallya-docs`). Local verification passed; the
-production end-to-end checks run after both branches merge.
+Status: implemented and verified on `main` in both repos (2026-11-18).
 Repos: `rallya-docs-agent` (Phase A), `rallya-docs` (Phase B)
 Scope: wire the existing Sanity → Knowledge sync to run after a successful docs
 publish. No changes to the agent's prompts, tools, or runtime behaviour.
@@ -130,15 +128,26 @@ Local checks (run 2026-11-18, all passed):
    section(s).`, `Synced: 0 created, 0 updated, 22 unchanged.` — confirms the
    Sanity read token and idempotence.
 
-Production checks (after both branches merge, still pending):
+Production checks (2026-11-18, all passed):
 
-1. Agent workflow manual run → `0 created, 0 updated, 22 unchanged` against the
-   Neon database.
-2. Edit one page in `content/docs` → merge → docs workflow green → agent run
-   reports `1 updated, 21 unchanged` and the dispatch response is `204`.
-3. Delete one page → merge → agent log shows `removed docs:rallya#<slug>`.
-4. Ask the deployed assistant a question answered by the edited page to confirm
-   the new content is searchable.
+1. Manual run `44337484560` was the one-time catch-up of the stale production
+   Knowledge: `0 created, 21 updated, 1 unchanged`. Run `44337782246` then
+   confirmed idempotence: `0 created, 0 updated, 22 unchanged`.
+2. Added a marker to `content/docs/llms-txt.mdx` (PR `rallya-docs#9`). Docs run
+   `44338352224` reported `1 to write, 23 unchanged, 0 to delete`, the
+   `Notify docs agent` step ran, and agent run `44338449378` (via
+   `repository_dispatch`) reported `0 created, 1 updated, 21 unchanged`.
+3. Added then removed a temporary page (PRs `rallya-docs#10` / `#11`). Docs run
+   `44339743334` reported `1 to write, 23 unchanged, 1 to delete` and
+   `delete: docPage.sync-smoke-test`; agent run `44339827722` logged
+   `removed docs:rallya#sync-smoke-test`.
+4. `POST https://rallya-docs.server.mastra.cloud/docs-chat` with a question
+   about the marker returned `BLUEBERRY-7` (trace
+   `5453850e20c4a7ea963b139de10146d3`), proving the deployed assistant reads
+   the freshly synced Knowledge.
+
+All smoke-test content was reverted in `rallya-docs#11`; both repos are back to
+the original 21 docs pages + 3 sections.
 
 ## Notes and risks
 
@@ -147,7 +156,11 @@ Production checks (after both branches merge, still pending):
 - Pruning only removes pages written by `sync:sanity`; hand-authored Knowledge
   pages are untouched.
 - The dispatch PAT is the only cross-repo credential. Store it as a secret and
-  rotate it if needed.
+  rotate it if needed. GitHub has no CLI/API for creating a fine-grained PAT, so
+  `DOCS_AGENT_DISPATCH_TOKEN` is currently the existing `gh` OAuth token
+  (`repo`, `read:org`, `gist` scopes). It works, but it is broader than the
+  intended Contents-only scope on `rallya-docs-agent`; replace it with a
+  fine-grained PAT at the next rotation.
 - If the agent repo is private, one short Actions run is billed per docs change.
 - The dispatch event must be sent to the default branch; merging Phase A before
   Phase B is required.
