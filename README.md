@@ -65,6 +65,33 @@ bun run sync -- --remove --force   # ... including pages that still have childre
 
 Run it after editors publish changes, or wire it to the Sanity webhook (`/api/sanity-revalidate` in `rallya-docs`) from your own job runner. `upsertPage()` is a host-only API: never expose the sync from an agent tool or an unauthenticated route.
 
+### Automatic re-sync
+
+Publishing from `rallya-docs` re-syncs Knowledge without a manual step:
+
+```
+merge to main (rallya-docs)
+  → sync content/docs into Sanity → trigger the production deploy
+  → repository_dispatch: docs-published
+      → .github/workflows/sync-knowledge.yml (this repo, default branch)
+          → bun run scripts/sync-sanity.ts --remove
+```
+
+- Only pages whose body changed are written: `upsertPage()` reports `unchanged` for everything else, so a publish does not re-upload the corpus.
+- Pages deleted from Sanity are pruned; deletes are limited to pages authored by `sync:sanity`, so hand-authored Knowledge pages are untouched.
+- Code-only pushes to `main` in `rallya-docs` publish nothing and do not dispatch, so no runner minutes are spent on a no-op.
+- The workflow runs on the repository's **default branch**, so changes to it only take effect once merged to `main`.
+
+Required repository secrets:
+
+| Secret | Source |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL with pgvector (Neon `mute-sky-16638432`), pooled connection string |
+| `SANITY_API_READ_TOKEN` | The same read token `rallya-docs` uses to build the site |
+
+Run it by hand from Actions > **Knowledge sync** > *Run workflow*, or locally with `bun run sync -- --dry-run` first. A fresh run against an up-to-date Knowledge prints `0 created, 0 updated, N unchanged`.
+
+
 ## Auth
 
 The server starts **unauthenticated** unless you set static API tokens — fine for a public-docs tool on your network, wrong for the open internet. `src/mastra/auth.ts` wires SimpleAuth from two env vars:
