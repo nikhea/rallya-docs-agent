@@ -1,0 +1,45 @@
+name: Knowledge sync
+
+# The docs agent's Knowledge mirrors the Rallya docs in Sanity. `rallya-docs`
+# publishes to Sanity on merge to main and then sends a `docs-published`
+# repository dispatch, which runs this workflow on the default branch.
+#
+# The sync is incremental: `upsertPage()` skips pages whose body is unchanged,
+# so unchanged pages are neither rewritten nor re-embedded. `--remove` prunes
+# Knowledge pages that no longer exist in Sanity, limited to the ones written
+# by `sync:sanity`.
+
+on:
+  repository_dispatch:
+    types: [docs-published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One sync at a time: a second publish waits rather than interleaving writes.
+concurrency:
+  group: knowledge-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync Sanity docs into Knowledge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SANITY_API_READ_TOKEN: ${{ secrets.SANITY_API_READ_TOKEN }}
+      DOCS_BASE_URL: https://rallya-docs.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Sync docs into Knowledge
+        run: bun run scripts/sync-sanity.ts --remove
