@@ -1,5 +1,11 @@
 # Redis-backed rate limiting for public API routes
 
+> Historical plan for the first pass. `plan/rate-limit-hardening.md` supersedes
+> it: the counter is now a two-key sliding window, Redis failures use a bounded
+> degraded limiter instead of full fail-open, and unknown IPs are denied by
+> default. The behaviour described below is the original design; `README.md`
+> ("Rate limits") is the current client-facing contract.
+
 ## Context
 
 The Mastra server exposes two custom, unauthenticated routes registered via
@@ -64,7 +70,8 @@ Run `INCR` and `PEXPIRE` together so a key cannot be left without a TTL.
 
 - Set `X-RateLimit-Limit`, `X-RateLimit-Remaining` (`max(0, max - count)`), `X-RateLimit-Reset` (epoch seconds) on every limited response.
 - On exceed (`count > max`) return `429` JSON with `Retry-After` = `ceil(ttlMs / 1000)`.
-- On Redis errors, log a warning and call `next()` (fail open).
+- On Redis errors, log a warning and call `next()` (fail open). *Superseded by
+  the degraded in-memory floor in `plan/rate-limit-hardening.md`.*
 
 ### Route wiring
 
@@ -80,7 +87,8 @@ Run `INCR` and `PEXPIRE` together so a key cannot be left without a TTL.
 - `bun run dev` with a local Redis (`docker run -p 6379:6379 redis`).
 - Burst curl requests to both routes: first N succeed, rest return `429` with `Retry-After`, `X-RateLimit-*`, and CORS headers intact. Separate buckets per route.
 - `redis-cli keys 'ratelimit:*'` / `ttl <key>` — keys expire after the window.
-- Stop Redis — requests still succeed (fail-open path).
+- Stop Redis — requests still succeed (historical fail-open path; current code
+  enforces the degraded in-memory floor described in the hardening plan).
 
 ## Files touched
 
