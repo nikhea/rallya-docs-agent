@@ -44,7 +44,13 @@ export const docsAgent = new Agent({
     "Answers questions about Rallya using the official documentation.",
   instructions: docInstructions,
   // Chat model comes from DOCS_AGENT_MODEL (see ../config.ts); no hardcoding.
-  model: "openrouter/openrouter/free",
+  model: [
+    {
+      model: "openrouter/openrouter/free",
+      maxRetries: 3,
+      modelSettings: { reasoning: "none" },
+    },
+  ],
   // agentModel,
   // Deterministic backstop: rewrite the bracketed page markers / bare Sources
   // lines the model sometimes emits into proper markdown links (see the file).
@@ -141,5 +147,8 @@ export const docsAgent = new Agent({
   defaultOptions: {
     maxSteps: MAX_STEPS,
     autoResumeSuspendedTools: true,
+    modelSettings: {
+      reasoning: "none",
+    },
   },
 });
