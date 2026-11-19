@@ -7,6 +7,7 @@
  * `server.middleware` does not. Counters live in Redis so every replica shares
  * one bucket, and a key's TTL is the limit window.
  */
+import type { MiddlewareHandler } from '@mastra/core/server';
 import Redis from 'ioredis';
 
 import { rateLimitEnabled, redisUrl } from '../config';
@@ -156,3 +157,36 @@ export const consumeRateLimit = async (
     return failOpen(max);
   }
 };
+
+/** Options for a single route's limiter. */
+export type RateLimitOptions = {
+  /** Bucket namespace, normally the route name (e.g. `docs-chat`). */
+  name: string;
+  max: number;
+  windowMs: number;
+};
+
+/**
+ * Hono middleware for a Mastra `ApiRoute`. Put it first in the route's
+ * `middleware` array so rejected requests never reach body parsing or the
+ * agent. Route-level middleware runs even on `requiresAuth: false` routes;
+ * global `server.middleware` does not.
+ */
+export const rateLimit = ({ name, max, windowMs }: RateLimitOptions): MiddlewareHandler =>
+  async (c, next) => {
+    const ip = clientIpFromHeaders(header => c.req.header(header));
+    const result = await consumeRateLimit(rateLimitKey(name, ip), max, windowMs);
+
+    c.header('X-RateLimit-Limit', String(result.limit));
+    c.header('X-RateLimit-Remaining', String(result.remaining));
+    c.header('X-RateLimit-Reset', String(result.resetAtSeconds));
+
+    if (!result.allowed) {
+      c.header('Retry-After', String(result.retryAfterSeconds));
+      return c.json(
+        { error: 'Too many requests', retryAfterSeconds: result.retryAfterSeconds },
+        429,
+      );
+    }
+    return next();
+  };
