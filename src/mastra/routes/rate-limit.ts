@@ -5,7 +5,9 @@
  * Mastra has no built-in limiter. Route-level `middleware` runs in the Hono
  * handler chain even though these routes are `requiresAuth: false`; the global
  * `server.middleware` does not. Counters live in Redis so every replica shares
- * one bucket, and a key's TTL is the limit window.
+ * one bucket. A sliding window uses two short-lived keys per IP (current and
+ * previous sub-window) weighted by elapsed time, removing the ~2x burst at a
+ * fixed-window boundary.
  */
 import type { MiddlewareHandler } from '@mastra/core/server';
 import { isIP } from 'node:net';
@@ -152,17 +154,65 @@ export type RateLimitResult = {
 };
 
 /**
- * `INCR` and the first-hit `PEXPIRE` run together so a key can never be left
- * without a TTL. Returns `[count, ttlMs]` to the caller.
+ * Sliding-window counter in one atomic script:
+ *   KEYS[1] = previous sub-window, KEYS[2] = current sub-window
+ *   ARGV    = [nowMs, windowMs, ttlMs]
+ *
+ * A request increments the current key. The estimate weights the previous
+ * key's count by how much of that window remains. The estimate is returned as
+ * a string because Redis truncates Lua numbers to integers on return.
  */
 const WINDOW_SCRIPT = `
-local current = redis.call('INCR', KEYS[1])
-if current == 1 then
-  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+
+local current = redis.call('INCR', KEYS[2])
+redis.call('PEXPIRE', KEYS[2], ARGV[3])
+if redis.call('PTTL', KEYS[1]) < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[3])
 end
-local ttl = redis.call('PTTL', KEYS[1])
-return { current, ttl }
+local prev = tonumber(redis.call('GET', KEYS[1]) or '0')
+
+local elapsed = now % window
+local estimate = current + prev * (1 - elapsed / window)
+return { current, prev, tostring(estimate) }
 `;
+
+/**
+ * Time until the sliding estimate drops to `max`, in milliseconds.
+ * The estimate decreases linearly within the current sub-window, then the
+ * current key becomes the "previous" key in the next sub-window.
+ */
+export const slidingRetryAfterMs = ({
+  now,
+  windowMs,
+  current,
+  prev,
+  max,
+}: {
+  now: number;
+  windowMs: number;
+  current: number;
+  prev: number;
+  max: number;
+}): number => {
+  const windowStart = Math.floor(now / windowMs) * windowMs;
+  const windowEnd = windowStart + windowMs;
+
+  // Decay of the previous key inside the current window.
+  if (prev > 0) {
+    const t = windowMs * (1 - (max - current) / prev);
+    if (Number.isFinite(t) && t >= 0 && now + t <= windowEnd) return t;
+  }
+
+  // Otherwise wait for the next window, where the current key becomes previous.
+  const untilNext = windowEnd - now;
+  if (current <= max) return Math.max(0, untilNext);
+
+  const decay = windowMs * (1 - max / current);
+  return Math.max(0, untilNext + (Number.isFinite(decay) ? decay : windowMs));
+};
 
 /** Per-route counters, readable by an admin/metrics endpoint if one is added. */
 export type RateLimitCounters = { allowed: number; limited: number; degraded: number };
@@ -289,26 +339,35 @@ export const consumeRateLimit = async (
   }
 
   try {
-    const [rawCount, rawTtl] = await redis.eval(
+    const now = Date.now();
+    const windowIndex = Math.floor(now / windowMs);
+    const [rawCurrent, rawPrev, rawEstimate] = await redis.eval(
       WINDOW_SCRIPT,
-      1,
-      key,
+      2,
+      `${key}:w:${windowIndex - 1}`,
+      `${key}:w:${windowIndex}`,
+      String(now),
       String(windowMs),
-    ) as [unknown, unknown];
-    const count = Number(rawCount);
-    const rawTtlMs = Number(rawTtl);
-    // PTTL is -2 if the key vanished, -1 if it has no expiry; treat both as a
-    // fresh window so retry-after and reset stay sane.
-    const ttlMs = Number.isFinite(rawTtlMs) && rawTtlMs > 0 ? rawTtlMs : windowMs;
+      String(2 * windowMs),
+    ) as [unknown, unknown, unknown];
+    const current = Number(rawCurrent);
+    const prev = Number(rawPrev);
+    const parsedEstimate = Number(rawEstimate);
+    const estimate = Number.isFinite(parsedEstimate) ? parsedEstimate : current;
+    const allowed = estimate <= max;
+    const retryAfterMs = allowed
+      ? 0
+      : slidingRetryAfterMs({ now, windowMs, current, prev, max });
     markRecovered(route);
     const result: RateLimitResult = {
-      allowed: count <= max,
+      allowed,
       limit: max,
-      remaining: Math.max(0, max - count),
-      retryAfterSeconds: Math.ceil(ttlMs / 1_000),
-      resetAtSeconds: Math.ceil((Date.now() + ttlMs) / 1_000),
+      remaining: Math.max(0, Math.floor(max - estimate)),
+      retryAfterSeconds: Math.ceil(retryAfterMs / 1_000),
+      // Epoch seconds when the current sub-window rolls over.
+      resetAtSeconds: Math.ceil(((windowIndex + 1) * windowMs) / 1_000),
     };
-    bump(route, result.allowed ? 'allowed' : 'limited');
+    bump(route, allowed ? 'allowed' : 'limited');
     return result;
   } catch (error) {
     return consumeFallback(key, max, windowMs, route, 'redis_error', error);

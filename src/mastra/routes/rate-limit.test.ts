@@ -7,6 +7,7 @@ import {
   getRateLimitCounters,
   normalizeClientIp,
   rateLimitKey,
+  slidingRetryAfterMs,
 } from './rate-limit';
 
 const headers = (values: Record<string, string>) =>
@@ -73,6 +74,28 @@ describe('rateLimitKey', () => {
   it('namespaces buckets by route so one route cannot consume another quota', () => {
     expect(rateLimitKey('docs-chat', '203.0.113.7')).toBe('ratelimit:docs-chat:203.0.113.7');
     expect(rateLimitKey('docs-feedback', '203.0.113.7')).toBe('ratelimit:docs-feedback:203.0.113.7');
+  });
+});
+
+describe('slidingRetryAfterMs', () => {
+  it('waits only as long as the previous key needs to decay within this window', () => {
+    // now=0, window=1000, prev=10 at weight 1, current=9 -> estimate 19 > 10.
+    // Need prev weight <= 1/10 -> ~900ms.
+    expect(slidingRetryAfterMs({ now: 0, windowMs: 1_000, current: 9, prev: 10, max: 10 }))
+      .toBeCloseTo(900, 5);
+  });
+
+  it('falls back to the next window when decay cannot happen in time', () => {
+    // now=900 -> 100ms left; current=10 already equals max, so wait for rollover.
+    expect(slidingRetryAfterMs({ now: 900, windowMs: 1_000, current: 10, prev: 10, max: 10 }))
+      .toBe(100);
+  });
+
+  it('handles a current count above max by decaying it in the next window', () => {
+    // current=12, prev=0, max=10. The current key does not decay in its own
+    // window, so wait for rollover (1000ms) then 12*(1-t/1000) <= 10 -> ~166.67ms.
+    expect(slidingRetryAfterMs({ now: 0, windowMs: 1_000, current: 12, prev: 0, max: 10 }))
+      .toBeCloseTo(1_000 + 1_000 * (1 - 10 / 12), 5);
   });
 });
 
