@@ -55,6 +55,8 @@ export const docsFeedbackRoute: ApiRoute = {
     origin: docsChatCorsOrigins,
     allowMethods: ["POST", "OPTIONS"],
     allowHeaders: ["Content-Type"],
+    // Match /docs-chat: browsers need these exposed to handle 429 responses.
+    exposeHeaders: ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"],
     maxAge: 86_400,
   },
   middleware: [

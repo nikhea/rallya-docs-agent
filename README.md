@@ -138,6 +138,28 @@ Body fields: `traceId` (required), `spanId` (optional), `feedbackType` (default 
 
 Use this route rather than Studio's feedback box when the data must reach Mastra Platform. Studio's box writes straight to the runtime's observability store, which never reaches the Platform because it bypasses the observability event bus. `/docs-feedback` goes through `mastra.observability.addFeedback()` → `MastraPlatformExporter`, so the record appears in Studio and the Platform feedback API. See `src/mastra/routes/docs-feedback.ts`.
 
+### Rate limits
+
+Both public routes are rate limited with a Redis-backed **sliding window** shared by all replicas. Defaults are 10 requests/minute for `/docs-chat` and 15 for `/docs-feedback` (`DOCS_CHAT_RATE_LIMIT_MAX`, `DOCS_CHAT_RATE_LIMIT_WINDOW_MS` and the `DOCS_FEEDBACK_*` equivalents). Buckets are keyed by client IP and namespaced per route, so feedback traffic does not consume chat quota.
+
+Every response from a limited route carries these headers:
+
+| Header | Meaning |
+| --- | --- |
+| `X-RateLimit-Limit` | Requests allowed per window for this bucket |
+| `X-RateLimit-Remaining` | Requests left, floored at 0 |
+| `X-RateLimit-Reset` | **Epoch seconds** when the current window ends (absolute time, not a delta) |
+| `Retry-After` | **Delta seconds** until the caller may retry; only on a 429 |
+
+They are listed in `Access-Control-Expose-Headers` on both routes, so a cross-origin docs client can read them. An over-quota request returns `429` with `{"error":"Too many requests","retryAfterSeconds":<number>}`; clients should honour `Retry-After` rather than guessing a backoff.
+
+Two cases change the numbers in those headers:
+
+- **Degraded mode:** if Redis is unavailable or a command times out, the limiter falls back to a bounded in-memory bucket at `max × RATE_LIMIT_FALLBACK_MULTIPLIER` (default 2x) **per instance**. `X-RateLimit-Limit` then reports the fallback limit — do not cache the limit from an earlier response.
+- **Unknown client IP:** with `UNKNOWN_IP_POLICY=deny` (the default) the request is rejected with `X-RateLimit-Limit: 0` and a full-window `Retry-After`. With `strict`, all such callers share one small bucket (`UNKNOWN_IP_STRICT_MAX`, default 3).
+
+Client IP comes from `CLIENT_IP_SOURCE` (`x-forwarded-for` by default, or `x-real-ip` / `cf-connecting-ip`). For `x-forwarded-for`, the limiter reads the entry `TRUSTED_PROXY_HOPS` positions from the **right** of the comma-separated chain and ignores the client-controlled left side. It validates the address, collapses IPv4-mapped IPv6 to IPv4, and folds IPv6 to a `/64` prefix — every host in one `/64` shares a bucket. Set `TRUSTED_PROXY_HOPS` for your edge (see the guidance in `.env.example`) before relying on per-IP limits. Configuration and the rollout decisions live in `.env.example` and `plan/rate-limit-hardening.md`.
+
 ## Notes
 
 - Knowledge is flagged **alpha** by Mastra: its API can change between releases, and its scopes are not yet a hard isolation boundary. That is fine here, since everything in it is public documentation.
@@ -155,6 +177,7 @@ Tracing and logging are configured in `src/mastra/index.ts`. The store follows `
 - **Platform export:** the config sets `retainStorageExporterOnPlatform: true`. Mastra Platform drops `MastraStorageExporter` by default when deploying, which leaves `getRecordedTrace()` with nothing to read and makes `/docs-feedback` return 404.
 - **Tracing:** every run is sampled (`SamplingStrategyType.ALWAYS`), internal spans are kept (`includeInternalSpans`), and `SensitiveDataFilter` redacts API keys and tokens from span inputs/outputs before they are stored.
 - **Logging:** `PinoLogger` writes every level at or above `LOG_LEVEL`; records are also exported into observability, and `loggerOptions.correlation` adds `trace_id`/`span_id` to log lines written inside a run, step or tool, so a stdout line points at its trace.
+- **Rate-limit signals:** the limiter writes JSON log lines independently of Pino. Alert on `level:"error", event:"rate_limit_degraded"` (fields: `route`, `reason`, `counter`, and usually `error`) — emitted once per route on entering degraded mode, while every degraded request increments the in-process `rate_limit_degraded` counter. `rate_limit_unknown_ip` is a `warn` with `route`, `policy`, `count`, `counter`, sampled at the first occurrence and every 100th thereafter; alert on a sustained non-zero rate. `rate_limit_recovered` marks the return from degraded mode. `getRateLimitCounters()` in `src/mastra/routes/rate-limit.ts` returns per-route `{allowed, limited, degraded, unknownIp}` snapshots but is not exposed through an endpoint yet.
 - **Reading them:** open Studio > Observability for the trace list and spans, or use the CLI:
 
   ```bash
