@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { rateLimitFallbackMultiplier } from '../config';
+import { rateLimitEnvSchema, rateLimitFallbackMultiplier } from '../config';
 import {
   clientIpFromHeaders,
   consumeFallback,
@@ -74,6 +74,44 @@ describe('rateLimitKey', () => {
   it('namespaces buckets by route so one route cannot consume another quota', () => {
     expect(rateLimitKey('docs-chat', '203.0.113.7')).toBe('ratelimit:docs-chat:203.0.113.7');
     expect(rateLimitKey('docs-feedback', '203.0.113.7')).toBe('ratelimit:docs-feedback:203.0.113.7');
+  });
+});
+
+describe('rateLimitEnvSchema', () => {
+  const valid = {
+    REDIS_URL: 'redis://localhost:6379',
+    RATE_LIMIT_ENABLED: 'true',
+    CLIENT_IP_SOURCE: 'x-forwarded-for',
+    TRUSTED_PROXY_HOPS: '0',
+    REDIS_COMMAND_TIMEOUT_MS: '200',
+    RATE_LIMIT_FALLBACK_MULTIPLIER: '2',
+    DOCS_CHAT_RATE_LIMIT_MAX: '10',
+    DOCS_CHAT_RATE_LIMIT_WINDOW_MS: '60000',
+    DOCS_FEEDBACK_RATE_LIMIT_MAX: '15',
+    DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS: '60000',
+  };
+
+  it('accepts sane values and coerces numbers', () => {
+    const parsed = rateLimitEnvSchema.parse(valid);
+    expect(parsed.DOCS_CHAT_RATE_LIMIT_MAX).toBe(10);
+    expect(parsed.DOCS_CHAT_RATE_LIMIT_WINDOW_MS).toBe(60_000);
+    expect(parsed.TRUSTED_PROXY_HOPS).toBe(0);
+  });
+
+  it('rejects a zero max instead of silently blocking everyone', () => {
+    expect(rateLimitEnvSchema.safeParse({ ...valid, DOCS_CHAT_RATE_LIMIT_MAX: '0' }).success)
+      .toBe(false);
+  });
+
+  it('rejects negative hops, bad URLs and unknown enums', () => {
+    expect(rateLimitEnvSchema.safeParse({ ...valid, TRUSTED_PROXY_HOPS: '-1' }).success).toBe(false);
+    expect(rateLimitEnvSchema.safeParse({ ...valid, REDIS_URL: 'http://localhost' }).success).toBe(false);
+    expect(rateLimitEnvSchema.safeParse({ ...valid, RATE_LIMIT_ENABLED: 'yes' }).success).toBe(false);
+    expect(rateLimitEnvSchema.safeParse({ ...valid, CLIENT_IP_SOURCE: 'x-bogus' }).success).toBe(false);
+  });
+
+  it('allows an empty REDIS_URL to disable limiting', () => {
+    expect(rateLimitEnvSchema.safeParse({ ...valid, REDIS_URL: '' }).success).toBe(true);
   });
 });
 

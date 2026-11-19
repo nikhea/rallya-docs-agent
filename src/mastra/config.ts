@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
 /**
  * Environment-backed configuration for the docs agent.
@@ -128,63 +129,93 @@ export const logsPrettyPrint = process.env.LOG_PRETTY === undefined
 /** Keep internal spans (model steps, memory, knowledge tools) in stored traces. */
 export const traceIncludeInternalSpans = process.env.TRACE_INCLUDE_INTERNAL_SPANS !== 'false';
 
+/* -------------------------------------------------------------------------- */
+/* Rate-limit configuration (validated with zod)                              */
+/* -------------------------------------------------------------------------- */
+
+/** Missing or blank env values use the default; present-but-invalid throws. */
+const present = (name: string): string | undefined => {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+};
+
+const intInRange = (min: number, max: number) =>
+  z.coerce.number().int().min(min).max(max);
+
+export const rateLimitEnvSchema = z.object({
+  REDIS_URL: z.string().refine(
+    value => value === '' || /^rediss?:\/\//i.test(value),
+    'REDIS_URL must start with redis:// or rediss:// (or be empty to disable)',
+  ),
+  RATE_LIMIT_ENABLED: z.enum(['true', 'false']),
+  CLIENT_IP_SOURCE: z.enum(['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip']),
+  TRUSTED_PROXY_HOPS: intInRange(0, 5),
+  REDIS_COMMAND_TIMEOUT_MS: intInRange(50, 2_000),
+  RATE_LIMIT_FALLBACK_MULTIPLIER: intInRange(1, 10),
+  DOCS_CHAT_RATE_LIMIT_MAX: intInRange(1, 1_000),
+  DOCS_CHAT_RATE_LIMIT_WINDOW_MS: intInRange(1_000, 86_400_000),
+  DOCS_FEEDBACK_RATE_LIMIT_MAX: intInRange(1, 1_000),
+  DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS: intInRange(1_000, 86_400_000),
+});
+
+const rateLimitEnv = (() => {
+  const result = rateLimitEnvSchema.safeParse({
+    REDIS_URL: process.env.REDIS_URL?.trim() ?? '',
+    RATE_LIMIT_ENABLED: present('RATE_LIMIT_ENABLED') ?? 'true',
+    CLIENT_IP_SOURCE: present('CLIENT_IP_SOURCE') ?? 'x-forwarded-for',
+    TRUSTED_PROXY_HOPS: present('TRUSTED_PROXY_HOPS') ?? '0',
+    REDIS_COMMAND_TIMEOUT_MS: present('REDIS_COMMAND_TIMEOUT_MS') ?? '200',
+    RATE_LIMIT_FALLBACK_MULTIPLIER: present('RATE_LIMIT_FALLBACK_MULTIPLIER') ?? '2',
+    DOCS_CHAT_RATE_LIMIT_MAX: present('DOCS_CHAT_RATE_LIMIT_MAX') ?? '10',
+    DOCS_CHAT_RATE_LIMIT_WINDOW_MS: present('DOCS_CHAT_RATE_LIMIT_WINDOW_MS') ?? '60000',
+    DOCS_FEEDBACK_RATE_LIMIT_MAX: present('DOCS_FEEDBACK_RATE_LIMIT_MAX') ?? '15',
+    DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS: present('DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS') ?? '60000',
+  });
+  if (result.success) return result.data;
+  const details = result.error.issues
+    .map(issue => `${issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
+  throw new Error(`[config] Invalid rate-limit environment variables: ${details}`);
+})();
+
 /**
  * Redis connection used for the public route rate-limit counters. Shared across
  * replicas, so one limit applies to the whole deployment. Empty means local dev
  * without Redis: the limiter is skipped with a warning (see routes/rate-limit.ts).
  */
-export const redisUrl = process.env.REDIS_URL?.trim() ?? '';
+export const redisUrl = rateLimitEnv.REDIS_URL;
 
 /** Master switch for public route rate limiting. Default: enabled. */
-export const rateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false';
+export const rateLimitEnabled = rateLimitEnv.RATE_LIMIT_ENABLED === 'true';
 
 /** Header carrying the client IP. See routes/rate-limit.ts for trust rules. */
-export type ClientIpSource = 'x-forwarded-for' | 'x-real-ip' | 'cf-connecting-ip';
-export const clientIpSource: ClientIpSource =
-  process.env.CLIENT_IP_SOURCE === 'x-real-ip' ||
-  process.env.CLIENT_IP_SOURCE === 'cf-connecting-ip'
-    ? process.env.CLIENT_IP_SOURCE
-    : 'x-forwarded-for';
+export type ClientIpSource = z.infer<typeof rateLimitEnvSchema>['CLIENT_IP_SOURCE'];
+export const clientIpSource = rateLimitEnv.CLIENT_IP_SOURCE;
 
 /**
  * Number of trusted proxies between the internet and this process. For an
  * appending proxy, the client is `hops` entries from the right; for a proxy
  * that overwrites X-Forwarded-For, leave this at 0.
  */
-const parsedHops = Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? '0', 10);
-export const trustedProxyHops = Number.isInteger(parsedHops) && parsedHops >= 0 ? parsedHops : 0;
+export const trustedProxyHops = rateLimitEnv.TRUSTED_PROXY_HOPS;
 
 /**
  * Redis command timeout. A slow Redis must not add latency to a public route;
  * on timeout the limiter drops into its in-memory degraded mode.
  */
-const parsedTimeout = Number(process.env.REDIS_COMMAND_TIMEOUT_MS ?? '200');
-export const redisCommandTimeoutMs =
-  Number.isFinite(parsedTimeout) && parsedTimeout >= 50
-    ? Math.min(2_000, parsedTimeout)
-    : 200;
+export const redisCommandTimeoutMs = rateLimitEnv.REDIS_COMMAND_TIMEOUT_MS;
 
 /**
  * Multiplier for the in-memory fallback limit while Redis is unavailable. The
  * floor is looser than the Redis limit (N replicas each get their own bucket)
  * but still protects the LLM endpoint during an outage.
  */
-const parsedFallback = Number(process.env.RATE_LIMIT_FALLBACK_MULTIPLIER ?? '2');
-export const rateLimitFallbackMultiplier =
-  Number.isFinite(parsedFallback) && parsedFallback >= 1
-    ? Math.min(10, parsedFallback)
-    : 2;
-
-/** Parse a positive integer env var, falling back on missing/invalid values. */
-const positiveIntEnv = (name: string, fallback: number): number => {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
-};
+export const rateLimitFallbackMultiplier = rateLimitEnv.RATE_LIMIT_FALLBACK_MULTIPLIER;
 
 /** Stricter defaults for the unauthenticated LLM chat endpoint. */
-export const docsChatRateLimitMax = positiveIntEnv('DOCS_CHAT_RATE_LIMIT_MAX', 10);
-export const docsChatRateLimitWindowMs = positiveIntEnv('DOCS_CHAT_RATE_LIMIT_WINDOW_MS', 60_000);
+export const docsChatRateLimitMax = rateLimitEnv.DOCS_CHAT_RATE_LIMIT_MAX;
+export const docsChatRateLimitWindowMs = rateLimitEnv.DOCS_CHAT_RATE_LIMIT_WINDOW_MS;
 
 /** Feedback is a cheap write, but still rate limited to stop abuse. */
-export const docsFeedbackRateLimitMax = positiveIntEnv('DOCS_FEEDBACK_RATE_LIMIT_MAX', 15);
-export const docsFeedbackRateLimitWindowMs = positiveIntEnv('DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS', 60_000);
+export const docsFeedbackRateLimitMax = rateLimitEnv.DOCS_FEEDBACK_RATE_LIMIT_MAX;
+export const docsFeedbackRateLimitWindowMs = rateLimitEnv.DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS;
