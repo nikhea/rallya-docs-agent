@@ -32,7 +32,7 @@ would not protect these endpoints.
 - [x] **6. `feat(rate-limit): add atomic fixed-window counter`** — Lua `INCR` + `PEXPIRE` via `eval`, returning allowed/remaining/retry-after; fail open on Redis errors.
 - [x] **7. `feat(rate-limit): add route middleware with headers and 429`** — `X-RateLimit-*` headers, `Retry-After`, JSON 429 response.
 - [x] **8. `feat(routes): rate limit /docs-chat`** — put the limiter first in the route's middleware array.
-- [ ] **9. `feat(routes): rate limit /docs-feedback`** — add the limiter to the route's middleware array.
+- [x] **9. `feat(routes): rate limit /docs-feedback`** — add the limiter to the route's middleware array.
 - [ ] **10. `test(rate-limit): add helper unit tests and verify`** — `bun test` for pure helpers, `bun run typecheck`, and manual verification notes.
 
 ## Implementation details
