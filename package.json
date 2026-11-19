@@ -34,6 +34,7 @@
     "@neon/config": "^1.11.3",
     "@neon/env": "^1.6.15",
     "@sanity/client": "^8.14.1",
+    "@upstash/redis": "^1.41.0",
     "bun": "^1.4.4",
     "ioredis": "^6.0.0",
     "mastra": "^1.40.0",
