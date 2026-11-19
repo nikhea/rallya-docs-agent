@@ -127,3 +127,27 @@ export const logsPrettyPrint = process.env.LOG_PRETTY === undefined
 
 /** Keep internal spans (model steps, memory, knowledge tools) in stored traces. */
 export const traceIncludeInternalSpans = process.env.TRACE_INCLUDE_INTERNAL_SPANS !== 'false';
+
+/**
+ * Redis connection used for the public route rate-limit counters. Shared across
+ * replicas, so one limit applies to the whole deployment. Empty means local dev
+ * without Redis: the limiter is skipped with a warning (see routes/rate-limit.ts).
+ */
+export const redisUrl = process.env.REDIS_URL?.trim() ?? '';
+
+/** Master switch for public route rate limiting. Default: enabled. */
+export const rateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false';
+
+/** Parse a positive integer env var, falling back on missing/invalid values. */
+const positiveIntEnv = (name: string, fallback: number): number => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+};
+
+/** Stricter defaults for the unauthenticated LLM chat endpoint. */
+export const docsChatRateLimitMax = positiveIntEnv('DOCS_CHAT_RATE_LIMIT_MAX', 10);
+export const docsChatRateLimitWindowMs = positiveIntEnv('DOCS_CHAT_RATE_LIMIT_WINDOW_MS', 60_000);
+
+/** Feedback is a cheap write, but still rate limited to stop abuse. */
+export const docsFeedbackRateLimitMax = positiveIntEnv('DOCS_FEEDBACK_RATE_LIMIT_MAX', 15);
+export const docsFeedbackRateLimitWindowMs = positiveIntEnv('DOCS_FEEDBACK_RATE_LIMIT_WINDOW_MS', 60_000);

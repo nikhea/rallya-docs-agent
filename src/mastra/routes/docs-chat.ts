@@ -24,8 +24,13 @@
 import { chatRoute } from "@mastra/ai-sdk";
 import type { ApiRoute, MiddlewareHandler } from "@mastra/core/server";
 
-import { docsChatCorsOrigins } from "../config";
+import {
+  docsChatCorsOrigins,
+  docsChatRateLimitMax,
+  docsChatRateLimitWindowMs,
+} from "../config";
 import { isValidId } from "./ids";
+import { rateLimit } from "./rate-limit";
 
 /** SSE comment every 15s while the stream is idle (see withSseHeartbeat). */
 const HEARTBEAT_MS = 15_000;
@@ -141,5 +146,14 @@ export const docsChatRoute: ApiRoute = {
     allowHeaders: ["Content-Type"],
     maxAge: 86_400,
   },
-  middleware: [requestLogger, visitorIdMemory],
+  middleware: [
+    // Reject over-quota callers before the body is parsed or the agent runs.
+    rateLimit({
+      name: "docs-chat",
+      max: docsChatRateLimitMax,
+      windowMs: docsChatRateLimitWindowMs,
+    }),
+    requestLogger,
+    visitorIdMemory,
+  ],
 };

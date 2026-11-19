@@ -20,8 +20,13 @@
  */
 import type { ApiRoute } from "@mastra/core/server";
 
-import { docsChatCorsOrigins } from "../config";
+import {
+  docsChatCorsOrigins,
+  docsFeedbackRateLimitMax,
+  docsFeedbackRateLimitWindowMs,
+} from "../config";
 import { isValidId } from "./ids";
+import { rateLimit } from "./rate-limit";
 
 /** Cap free-text values so a public caller can't push unbounded payloads. */
 const MAX_TEXT_LENGTH = 2_000;
@@ -52,6 +57,13 @@ export const docsFeedbackRoute: ApiRoute = {
     allowHeaders: ["Content-Type"],
     maxAge: 86_400,
   },
+  middleware: [
+    rateLimit({
+      name: "docs-feedback",
+      max: docsFeedbackRateLimitMax,
+      windowMs: docsFeedbackRateLimitWindowMs,
+    }),
+  ],
   createHandler: async ({ mastra }) => async c => {
     if (!mastra.observability.getRecordedTrace) {
       return c.json({ error: "Feedback is not supported by the active observability implementation" }, 501);
