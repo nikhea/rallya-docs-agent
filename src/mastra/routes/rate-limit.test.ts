@@ -205,3 +205,28 @@ describe('unknown IP policy', () => {
     expect(await res.json()).toEqual({ error: 'Too many requests', retryAfterSeconds: 60 });
   });
 });
+
+describe('public route CORS', () => {
+  // ApiRoute is a union and `cors` only exists on the custom-route variant.
+  const exposeHeadersOf = (route: unknown): string[] | undefined => {
+    if (!route || typeof route !== 'object' || !('cors' in route)) return undefined;
+    const cors = (route as { cors?: unknown }).cors;
+    if (!cors || typeof cors !== 'object' || !('exposeHeaders' in cors)) return undefined;
+    return (cors as { exposeHeaders?: string[] }).exposeHeaders;
+  };
+
+  it('exposes rate-limit headers to cross-origin docs clients', async () => {
+    const [{ docsChatRoute }, { docsFeedbackRoute }] = await Promise.all([
+      import('./docs-chat'),
+      import('./docs-feedback'),
+    ]);
+    const exposed = [
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
+      'X-RateLimit-Reset',
+      'Retry-After',
+    ];
+    expect(exposeHeadersOf(docsChatRoute)).toEqual(exposed);
+    expect(exposeHeadersOf(docsFeedbackRoute)).toEqual(exposed);
+  });
+});

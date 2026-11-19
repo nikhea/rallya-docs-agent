@@ -144,6 +144,9 @@ export const docsChatRoute: ApiRoute = {
     origin: docsChatCorsOrigins,
     allowMethods: ["POST", "OPTIONS"],
     allowHeaders: ["Content-Type"],
+    // Without this, a cross-origin docs client cannot read the rate-limit
+    // headers or Retry-After from its fetch response.
+    exposeHeaders: ["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"],
     maxAge: 86_400,
   },
   middleware: [
