@@ -149,6 +149,8 @@ export const rateLimitEnvSchema = z.object({
   ),
   RATE_LIMIT_ENABLED: z.enum(['true', 'false']),
   CLIENT_IP_SOURCE: z.enum(['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip']),
+  UNKNOWN_IP_POLICY: z.enum(['deny', 'strict']),
+  UNKNOWN_IP_STRICT_MAX: intInRange(1, 1_000),
   TRUSTED_PROXY_HOPS: intInRange(0, 5),
   REDIS_COMMAND_TIMEOUT_MS: intInRange(50, 2_000),
   RATE_LIMIT_FALLBACK_MULTIPLIER: intInRange(1, 10),
@@ -163,6 +165,8 @@ const rateLimitEnv = (() => {
     REDIS_URL: process.env.REDIS_URL?.trim() ?? '',
     RATE_LIMIT_ENABLED: present('RATE_LIMIT_ENABLED') ?? 'true',
     CLIENT_IP_SOURCE: present('CLIENT_IP_SOURCE') ?? 'x-forwarded-for',
+    UNKNOWN_IP_POLICY: present('UNKNOWN_IP_POLICY') ?? 'deny',
+    UNKNOWN_IP_STRICT_MAX: present('UNKNOWN_IP_STRICT_MAX') ?? '3',
     TRUSTED_PROXY_HOPS: present('TRUSTED_PROXY_HOPS') ?? '0',
     REDIS_COMMAND_TIMEOUT_MS: present('REDIS_COMMAND_TIMEOUT_MS') ?? '200',
     RATE_LIMIT_FALLBACK_MULTIPLIER: present('RATE_LIMIT_FALLBACK_MULTIPLIER') ?? '2',
@@ -191,6 +195,14 @@ export const rateLimitEnabled = rateLimitEnv.RATE_LIMIT_ENABLED === 'true';
 /** Header carrying the client IP. See routes/rate-limit.ts for trust rules. */
 export type ClientIpSource = z.infer<typeof rateLimitEnvSchema>['CLIENT_IP_SOURCE'];
 export const clientIpSource = rateLimitEnv.CLIENT_IP_SOURCE;
+
+/**
+ * What to do when no valid client IP can be derived. 'deny' fails closed (the
+ * default for an LLM-backed endpoint); 'strict' applies a much smaller bucket.
+ */
+export type UnknownIpPolicy = z.infer<typeof rateLimitEnvSchema>['UNKNOWN_IP_POLICY'];
+export const unknownIpPolicy = rateLimitEnv.UNKNOWN_IP_POLICY;
+export const unknownIpStrictMax = rateLimitEnv.UNKNOWN_IP_STRICT_MAX;
 
 /**
  * Number of trusted proxies between the internet and this process. For an

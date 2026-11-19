@@ -20,6 +20,8 @@ import {
   redisCommandTimeoutMs,
   redisUrl,
   trustedProxyHops,
+  unknownIpPolicy,
+  unknownIpStrictMax,
   type ClientIpSource,
 } from '../config';
 
@@ -215,7 +217,12 @@ export const slidingRetryAfterMs = ({
 };
 
 /** Per-route counters, readable by an admin/metrics endpoint if one is added. */
-export type RateLimitCounters = { allowed: number; limited: number; degraded: number };
+export type RateLimitCounters = {
+  allowed: number;
+  limited: number;
+  degraded: number;
+  unknownIp: number;
+};
 const counters = new Map<string, RateLimitCounters>();
 
 /** Expose a snapshot without leaking the mutable map. */
@@ -226,9 +233,29 @@ export const getRateLimitCounters = (): Record<string, RateLimitCounters> => {
 };
 
 const bump = (route: string, kind: keyof RateLimitCounters): void => {
-  const current = counters.get(route) ?? { allowed: 0, limited: 0, degraded: 0 };
+  const current = counters.get(route) ?? { allowed: 0, limited: 0, degraded: 0, unknownIp: 0 };
   current[kind] += 1;
   counters.set(route, current);
+};
+
+/** Structured, sampled warning so a header-less flood cannot flood the logs. */
+const unknownIpCounts = new Map<string, number>();
+export const recordUnknownIp = (route: string): void => {
+  const count = (unknownIpCounts.get(route) ?? 0) + 1;
+  unknownIpCounts.set(route, count);
+  bump(route, 'unknownIp');
+  if (count === 1 || count % 100 === 0) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'rate_limit_unknown_ip',
+        route,
+        policy: unknownIpPolicy,
+        count,
+        counter: 'rate_limit_unknown_ip_total',
+      }),
+    );
+  }
 };
 
 /** Result used only when limiting is explicitly disabled (no Redis / master off). */
@@ -394,11 +421,35 @@ export const rateLimit = ({ name, max, windowMs }: RateLimitOptions): Middleware
       source: clientIpSource,
       trustedProxyHops,
     });
-    // Task 5 replaces the fallback with an explicit deny/strict policy.
-    const result = await consumeRateLimit(rateLimitKey(name, ip ?? 'unknown'), max, windowMs, name);
+
+    let result: RateLimitResult;
+    if (!ip) {
+      recordUnknownIp(name);
+      if (unknownIpPolicy === 'deny') {
+        bump(name, 'limited');
+        result = {
+          allowed: false,
+          limit: 0,
+          remaining: 0,
+          retryAfterSeconds: Math.ceil(windowMs / 1_000),
+          resetAtSeconds: Math.ceil((Date.now() + windowMs) / 1_000),
+        };
+      } else {
+        // 'strict': same shared bucket, but far fewer requests per window.
+        result = await consumeRateLimit(
+          rateLimitKey(name, 'unknown'),
+          Math.min(max, unknownIpStrictMax),
+          windowMs,
+          name,
+        );
+      }
+    } else {
+      result = await consumeRateLimit(rateLimitKey(name, ip), max, windowMs, name);
+    }
 
     c.header('X-RateLimit-Limit', String(result.limit));
     c.header('X-RateLimit-Remaining', String(result.remaining));
+    // Epoch seconds when the current sub-window rolls over.
     c.header('X-RateLimit-Reset', String(result.resetAtSeconds));
 
     if (!result.allowed) {

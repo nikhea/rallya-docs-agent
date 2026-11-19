@@ -30,7 +30,7 @@ the review list.
 - [x] **2. `feat(rate-limit): add degraded-mode in-memory floor and timeout`** — `commandTimeout: 200`, bounded in-memory fallback limiter, structured error log + `rate_limit_degraded_total` counter.
 - [x] **3. `feat(rate-limit): use a sliding-window counter`** — two weighted keys in one Lua script, deterministic window indices, `Math.ceil` retry-after, PTTL -1/-2 safety, epoch-seconds reset.
 - [x] **4. `feat(config): validate rate-limit env vars with zod`** — positive ints with bounds, boolean enum, URL check; throw on explicitly invalid values.
-- [ ] **5. `feat(rate-limit): deny or strictly limit unknown client IPs`** — `UNKNOWN_IP_POLICY=deny|strict`, structured warning + counter, tests.
+- [x] **5. `feat(rate-limit): deny or strictly limit unknown client IPs`** — `UNKNOWN_IP_POLICY=deny|strict`, structured warning + counter, tests.
 - [ ] **6. `docs(env): document new rate-limit vars and verify`** — `.env.example`, platform env record, `bun test`, `bun run typecheck`, `bun run build`, Redis smoke test.
 
 ## Deferred (not in this branch)

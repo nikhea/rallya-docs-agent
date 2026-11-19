@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'bun:test';
+import { Hono } from 'hono';
 
-import { rateLimitEnvSchema, rateLimitFallbackMultiplier } from '../config';
+import { rateLimitEnvSchema, rateLimitFallbackMultiplier, unknownIpPolicy } from '../config';
 import {
   clientIpFromHeaders,
   consumeFallback,
   getRateLimitCounters,
   normalizeClientIp,
+  rateLimit,
   rateLimitKey,
+  recordUnknownIp,
   slidingRetryAfterMs,
 } from './rate-limit';
 
@@ -82,6 +85,8 @@ describe('rateLimitEnvSchema', () => {
     REDIS_URL: 'redis://localhost:6379',
     RATE_LIMIT_ENABLED: 'true',
     CLIENT_IP_SOURCE: 'x-forwarded-for',
+    UNKNOWN_IP_POLICY: 'deny',
+    UNKNOWN_IP_STRICT_MAX: '3',
     TRUSTED_PROXY_HOPS: '0',
     REDIS_COMMAND_TIMEOUT_MS: '200',
     RATE_LIMIT_FALLBACK_MULTIPLIER: '2',
@@ -112,6 +117,13 @@ describe('rateLimitEnvSchema', () => {
 
   it('allows an empty REDIS_URL to disable limiting', () => {
     expect(rateLimitEnvSchema.safeParse({ ...valid, REDIS_URL: '' }).success).toBe(true);
+  });
+
+  it('rejects invalid unknown-IP policy and strict max', () => {
+    expect(rateLimitEnvSchema.safeParse({ ...valid, UNKNOWN_IP_POLICY: 'allow' }).success)
+      .toBe(false);
+    expect(rateLimitEnvSchema.safeParse({ ...valid, UNKNOWN_IP_STRICT_MAX: '0' }).success)
+      .toBe(false);
   });
 });
 
@@ -168,5 +180,28 @@ describe('consumeFallback', () => {
     consumeFallback('test:fallback:counter', 3, 60_000, 'counter-test', 'redis_unavailable', undefined, 1);
     consumeFallback('test:fallback:counter', 3, 60_000, 'counter-test', 'redis_unavailable', undefined, 1);
     expect(getRateLimitCounters()['counter-test']?.degraded).toBe(before + 2);
+  });
+});
+
+describe('unknown IP policy', () => {
+  it('increments the unknown-IP counter', () => {
+    const before = getRateLimitCounters()['unknown-counter-test']?.unknownIp ?? 0;
+    recordUnknownIp('unknown-counter-test');
+    expect(getRateLimitCounters()['unknown-counter-test']?.unknownIp).toBe(before + 1);
+  });
+
+  it('denies a request with no client IP when the policy is deny', async () => {
+    // Only meaningful with the default deny policy; the strict policy is
+    // validated by the schema test above.
+    if (unknownIpPolicy !== 'deny') return;
+    const app = new Hono();
+    app.post('/x', rateLimit({ name: 'unknown-test', max: 10, windowMs: 60_000 }));
+    app.post('/x', c => c.text('ok'));
+
+    const res = await app.request('/x', { method: 'POST' });
+    expect(res.status).toBe(429);
+    expect(res.headers.get('X-RateLimit-Limit')).toBe('0');
+    expect(res.headers.get('Retry-After')).toBe('60');
+    expect(await res.json()).toEqual({ error: 'Too many requests', retryAfterSeconds: 60 });
   });
 });
