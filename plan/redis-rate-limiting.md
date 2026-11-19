@@ -29,7 +29,7 @@ would not protect these endpoints.
 - [x] **3. `feat(config): add Redis and rate limit env configuration`** — `REDIS_URL`, `RATE_LIMIT_ENABLED`, chat + feedback limits/windows in `config.ts` and `.env.example`.
 - [x] **4. `feat(rate-limit): add lazy Redis client with fail-open guard`** — `getRedis()` singleton and enablement check in `src/mastra/routes/rate-limit.ts`.
 - [x] **5. `feat(rate-limit): add client IP key extraction`** — pure helpers for `x-forwarded-for` / `x-real-ip` / fallback and the `ratelimit:<name>:<ip>` key.
-- [ ] **6. `feat(rate-limit): add atomic fixed-window counter`** — Lua `INCR` + `PEXPIRE` via `eval`, returning allowed/remaining/retry-after; fail open on Redis errors.
+- [x] **6. `feat(rate-limit): add atomic fixed-window counter`** — Lua `INCR` + `PEXPIRE` via `eval`, returning allowed/remaining/retry-after; fail open on Redis errors.
 - [ ] **7. `feat(rate-limit): add route middleware with headers and 429`** — `X-RateLimit-*` headers, `Retry-After`, JSON 429 response.
 - [ ] **8. `feat(routes): rate limit /docs-chat`** — put the limiter first in the route's middleware array.
 - [ ] **9. `feat(routes): rate limit /docs-feedback`** — add the limiter to the route's middleware array.

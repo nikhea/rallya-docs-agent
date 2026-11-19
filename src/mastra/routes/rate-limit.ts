@@ -79,3 +79,80 @@ export const clientIpFromHeaders = (getHeader: HeaderGetter): string => {
 
 /** Namespace buckets by route so feedback traffic can't consume chat quota. */
 export const rateLimitKey = (name: string, ip: string): string => `ratelimit:${name}:${ip}`;
+
+export type RateLimitResult = {
+  allowed: boolean;
+  limit: number;
+  remaining: number;
+  /** Seconds until the window resets; 0 when not limited. */
+  retryAfterSeconds: number;
+  /** Epoch seconds when the current window resets. */
+  resetAtSeconds: number;
+};
+
+/**
+ * `INCR` and the first-hit `PEXPIRE` run together so a key can never be left
+ * without a TTL. Returns `[count, ttlMs]` to the caller.
+ */
+const WINDOW_SCRIPT = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+local ttl = redis.call('PTTL', KEYS[1])
+return { current, ttl }
+`;
+
+const warned = new Set<string>();
+const warnOnce = (message: string, error?: unknown): void => {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message, error ?? '');
+};
+
+/** Result used when the limiter is disabled or Redis is unavailable. */
+const failOpen = (max: number): RateLimitResult => ({
+  allowed: true,
+  limit: max,
+  remaining: max,
+  retryAfterSeconds: 0,
+  resetAtSeconds: Math.ceil(Date.now() / 1_000),
+});
+
+/**
+ * Consume one request from a fixed-window bucket. Fail open on any Redis
+ * problem: rate limiting protects the endpoint, it is not the endpoint.
+ */
+export const consumeRateLimit = async (
+  key: string,
+  max: number,
+  windowMs: number,
+): Promise<RateLimitResult> => {
+  const redis = getRedisClient();
+  if (!redis) return failOpen(max);
+  if (!(await ensureRedisReady(redis))) {
+    warnOnce('[rate-limit] Redis unavailable; allowing request');
+    return failOpen(max);
+  }
+
+  try {
+    const [rawCount, rawTtl] = await redis.eval(
+      WINDOW_SCRIPT,
+      1,
+      key,
+      String(windowMs),
+    ) as [unknown, unknown];
+    const count = Number(rawCount);
+    const ttlMs = Math.max(0, Number(rawTtl));
+    return {
+      allowed: count <= max,
+      limit: max,
+      remaining: Math.max(0, max - count),
+      retryAfterSeconds: Math.ceil(ttlMs / 1_000),
+      resetAtSeconds: Math.ceil((Date.now() + ttlMs) / 1_000),
+    };
+  } catch (error) {
+    warnOnce('[rate-limit] Redis error; allowing request', error);
+    return failOpen(max);
+  }
+};
