@@ -138,6 +138,22 @@ export const redisUrl = process.env.REDIS_URL?.trim() ?? '';
 /** Master switch for public route rate limiting. Default: enabled. */
 export const rateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false';
 
+/** Header carrying the client IP. See routes/rate-limit.ts for trust rules. */
+export type ClientIpSource = 'x-forwarded-for' | 'x-real-ip' | 'cf-connecting-ip';
+export const clientIpSource: ClientIpSource =
+  process.env.CLIENT_IP_SOURCE === 'x-real-ip' ||
+  process.env.CLIENT_IP_SOURCE === 'cf-connecting-ip'
+    ? process.env.CLIENT_IP_SOURCE
+    : 'x-forwarded-for';
+
+/**
+ * Number of trusted proxies between the internet and this process. For an
+ * appending proxy, the client is `hops` entries from the right; for a proxy
+ * that overwrites X-Forwarded-For, leave this at 0.
+ */
+const parsedHops = Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? '0', 10);
+export const trustedProxyHops = Number.isInteger(parsedHops) && parsedHops >= 0 ? parsedHops : 0;
+
 /** Parse a positive integer env var, falling back on missing/invalid values. */
 const positiveIntEnv = (name: string, fallback: number): number => {
   const value = Number(process.env[name]);

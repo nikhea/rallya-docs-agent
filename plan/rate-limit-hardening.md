@@ -25,8 +25,8 @@ the review list.
 
 ## Tasks / commits
 
-- [ ] **0. `docs(plan): add rate limit hardening plan`** — save this file.
-- [ ] **1. `feat(rate-limit): derive client IP from trusted proxy hops`** — right-minus-N parsing, IP validation, IPv6 /64, `TRUSTED_PROXY_HOPS`, `CLIENT_IP_SOURCE`, unit tests.
+- [x] **0. `docs(plan): add rate limit hardening plan`** — save this file.
+- [x] **1. `feat(rate-limit): derive client IP from trusted proxy hops`** — right-minus-N parsing, IP validation, IPv6 /64, `TRUSTED_PROXY_HOPS`, `CLIENT_IP_SOURCE`, unit tests.
 - [ ] **2. `feat(rate-limit): add degraded-mode in-memory floor and timeout`** — `commandTimeout: 200`, bounded in-memory fallback limiter, structured error log + `rate_limit_degraded_total` counter.
 - [ ] **3. `feat(rate-limit): use a sliding-window counter`** — two weighted keys in one Lua script, deterministic window indices, `Math.ceil` retry-after, PTTL -1/-2 safety, epoch-seconds reset.
 - [ ] **4. `feat(config): validate rate-limit env vars with zod`** — positive ints with bounds, boolean enum, URL check; throw on explicitly invalid values.

@@ -8,9 +8,16 @@
  * one bucket, and a key's TTL is the limit window.
  */
 import type { MiddlewareHandler } from '@mastra/core/server';
+import { isIP } from 'node:net';
 import Redis from 'ioredis';
 
-import { rateLimitEnabled, redisUrl } from '../config';
+import {
+  clientIpSource,
+  rateLimitEnabled,
+  redisUrl,
+  trustedProxyHops,
+  type ClientIpSource,
+} from '../config';
 
 let client: Redis | null = null;
 let connecting: Promise<void> | null = null;
@@ -65,17 +72,63 @@ export const ensureRedisReady = async (redis: Redis): Promise<boolean> => {
 
 type HeaderGetter = (name: string) => string | undefined;
 
+/** Expand a compressed IPv6 address into eight hextets. */
+const expandIpv6 = (ip: string): string[] | null => {
+  if (ip.includes('%')) return null; // zone identifiers are not stable identities
+  const [left = '', right = ''] = ip.split('::');
+  const head = left ? left.split(':') : [];
+  const tail = right ? right.split(':') : [];
+  const missing = 8 - head.length - tail.length;
+  const parts = [...head, ...Array<string>(Math.max(0, missing)).fill('0'), ...tail];
+  return parts.length === 8 && parts.every(part => /^[0-9a-f]{1,4}$/i.test(part))
+    ? parts
+    : null;
+};
+
 /**
- * Client IP for the rate bucket. Railway/Cloud Run set `x-forwarded-for`, whose
- * first entry is the original client; `x-real-ip` is the fallback. If the server
- * is ever exposed directly these headers are spoofable — use
- * `@hono/node-server`'s `getConnInfo()` there instead.
+ * Validate an IP and reduce it to a stable bucket identity. IPv6 is folded to
+ * its /64 prefix so one host cannot rotate through addresses within its prefix;
+ * IPv4-mapped IPv6 addresses collapse to the IPv4 form.
  */
-export const clientIpFromHeaders = (getHeader: HeaderGetter): string => {
-  const forwarded = getHeader('x-forwarded-for')?.split(',')[0]?.trim();
-  if (forwarded) return forwarded;
-  const real = getHeader('x-real-ip')?.trim();
-  return real || 'unknown';
+export const normalizeClientIp = (raw: string): string | null => {
+  const value = raw.trim();
+  if (isIP(value) === 4) return value;
+  if (isIP(value) === 6) {
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(value);
+    if (mapped) return mapped[1];
+    const parts = expandIpv6(value);
+    if (!parts) return null;
+    return `${parts.slice(0, 4).map(part => part.toLowerCase().padStart(4, '0')).join(':')}::/64`;
+  }
+  return null;
+};
+
+export type ClientIpOptions = {
+  source: ClientIpSource;
+  trustedProxyHops: number;
+};
+
+/**
+ * Client IP for the rate bucket. Proxies differ: some overwrite
+ * `x-forwarded-for` with the peer address, others append to whatever the client
+ * sent. `trustedProxyHops` says how many trusted hops sit between the internet
+ * and this process, so we take that many entries from the RIGHT of the chain —
+ * never the attacker-controlled left side. Returns null when the chain is too
+ * short or contains no valid IP; callers decide whether to deny or limit.
+ */
+export const clientIpFromHeaders = (
+  getHeader: HeaderGetter,
+  options: ClientIpOptions,
+): string | null => {
+  const raw = getHeader(options.source);
+  if (!raw) return null;
+
+  if (options.source === 'x-forwarded-for') {
+    const entries = raw.split(',').map(entry => entry.trim());
+    const index = entries.length - 1 - options.trustedProxyHops;
+    return index >= 0 ? normalizeClientIp(entries[index] ?? '') : null;
+  }
+  return normalizeClientIp(raw);
 };
 
 /** Namespace buckets by route so feedback traffic can't consume chat quota. */
@@ -174,8 +227,12 @@ export type RateLimitOptions = {
  */
 export const rateLimit = ({ name, max, windowMs }: RateLimitOptions): MiddlewareHandler =>
   async (c, next) => {
-    const ip = clientIpFromHeaders(header => c.req.header(header));
-    const result = await consumeRateLimit(rateLimitKey(name, ip), max, windowMs);
+    const ip = clientIpFromHeaders(header => c.req.header(header), {
+      source: clientIpSource,
+      trustedProxyHops,
+    });
+    // Task 5 replaces the fallback with an explicit deny/strict policy.
+    const result = await consumeRateLimit(rateLimitKey(name, ip ?? 'unknown'), max, windowMs);
 
     c.header('X-RateLimit-Limit', String(result.limit));
     c.header('X-RateLimit-Remaining', String(result.remaining));
