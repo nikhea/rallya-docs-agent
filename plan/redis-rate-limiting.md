@@ -26,7 +26,7 @@ would not protect these endpoints.
 
 - [x] **1. `docs(plan): add Redis rate limiting implementation plan`** — save this file with the breakdown.
 - [x] **2. `chore(deps): add ioredis for Redis-backed rate limiting`** — add the dependency and update the lockfile.
-- [ ] **3. `feat(config): add Redis and rate limit env configuration`** — `REDIS_URL`, `RATE_LIMIT_ENABLED`, chat + feedback limits/windows in `config.ts` and `.env.example`.
+- [x] **3. `feat(config): add Redis and rate limit env configuration`** — `REDIS_URL`, `RATE_LIMIT_ENABLED`, chat + feedback limits/windows in `config.ts` and `.env.example`.
 - [ ] **4. `feat(rate-limit): add lazy Redis client with fail-open guard`** — `getRedis()` singleton and enablement check in `src/mastra/routes/rate-limit.ts`.
 - [ ] **5. `feat(rate-limit): add client IP key extraction`** — pure helpers for `x-forwarded-for` / `x-real-ip` / fallback and the `ratelimit:<name>:<ip>` key.
 - [ ] **6. `feat(rate-limit): add atomic fixed-window counter`** — Lua `INCR` + `PEXPIRE` via `eval`, returning allowed/remaining/retry-after; fail open on Redis errors.
