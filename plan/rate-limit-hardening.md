@@ -31,7 +31,7 @@ the review list.
 - [x] **3. `feat(rate-limit): use a sliding-window counter`** — two weighted keys in one Lua script, deterministic window indices, `Math.ceil` retry-after, PTTL -1/-2 safety, epoch-seconds reset.
 - [x] **4. `feat(config): validate rate-limit env vars with zod`** — positive ints with bounds, boolean enum, URL check; throw on explicitly invalid values.
 - [x] **5. `feat(rate-limit): deny or strictly limit unknown client IPs`** — `UNKNOWN_IP_POLICY=deny|strict`, structured warning + counter, tests.
-- [ ] **6. `docs(env): document new rate-limit vars and verify`** — `.env.example`, platform env record, `bun test`, `bun run typecheck`, `bun run build`, Redis smoke test.
+- [x] **6. `docs(env): document new rate-limit vars and verify`** — `.env.example`, platform env record, `bun test`, `bun run typecheck`, `bun run build`, Redis smoke test.
 
 ## Deferred (not in this branch)
 
@@ -45,3 +45,20 @@ the review list.
 
 Each task: `bun run typecheck` and `bun test`. Final: `bun run build`, local
 Redis smoke test, and a check that the Mastra Platform env record has the new keys.
+
+## Results
+
+- 22 unit tests pass; typecheck clean (23 files); `mastra build` successful.
+- Real Redis Lua smoke test: sliding keys with index + 2x-window PTTL, 2 allowed
+  then 429 on the 3rd, `Retry-After` and `X-RateLimit-*` headers present.
+- `TRUSTED_PROXY_HOPS=1` canary: a spoofed left `X-Forwarded-For` entry was
+  ignored; the Redis key used the real IP from the right-minus-1 position.
+- `UNKNOWN_IP_POLICY=strict` smoke test: max 3, 3 allowed then 429; structured
+  `rate_limit_unknown_ip` warning emitted.
+- Startup with `DOCS_CHAT_RATE_LIMIT_MAX=0` throws a clear zod error.
+- Mastra Platform env record now has 42 vars (was 36); all 14 rate-limit/Redis
+  keys present and all pre-existing values preserved.
+
+Still required after deploy: confirm whether the edge overwrites or appends
+`X-Forwarded-For`, then adjust `TRUSTED_PROXY_HOPS`. Also alert on the
+`rate_limit_degraded` error log and `rate_limit_unknown_ip` warning.
