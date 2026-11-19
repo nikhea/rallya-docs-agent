@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
-import { clientIpFromHeaders, normalizeClientIp, rateLimitKey } from './rate-limit';
+import { rateLimitFallbackMultiplier } from '../config';
+import {
+  clientIpFromHeaders,
+  consumeFallback,
+  getRateLimitCounters,
+  normalizeClientIp,
+  rateLimitKey,
+} from './rate-limit';
 
 const headers = (values: Record<string, string>) =>
   (name: string): string | undefined => values[name.toLowerCase()];
@@ -66,5 +73,39 @@ describe('rateLimitKey', () => {
   it('namespaces buckets by route so one route cannot consume another quota', () => {
     expect(rateLimitKey('docs-chat', '203.0.113.7')).toBe('ratelimit:docs-chat:203.0.113.7');
     expect(rateLimitKey('docs-feedback', '203.0.113.7')).toBe('ratelimit:docs-feedback:203.0.113.7');
+  });
+});
+
+describe('consumeFallback', () => {
+  const max = 3;
+  const limit = Math.max(1, Math.floor(max * rateLimitFallbackMultiplier));
+
+  it('enforces a looser but finite limit while Redis is down', () => {
+    const key = 'test:fallback:limit';
+    for (let i = 0; i < limit; i += 1) {
+      expect(consumeFallback(key, max, 60_000, 'test-route', 'redis_unavailable', undefined, 1_000).allowed)
+        .toBe(true);
+    }
+    expect(consumeFallback(key, max, 60_000, 'test-route', 'redis_unavailable', undefined, 1_000).allowed)
+      .toBe(false);
+  });
+
+  it('resets the bucket after the window elapses', () => {
+    const key = 'test:fallback:reset';
+    const start = 10_000;
+    for (let i = 0; i < limit; i += 1) {
+      consumeFallback(key, max, 1_000, 'test-route', 'redis_error', new Error('boom'), start);
+    }
+    expect(consumeFallback(key, max, 1_000, 'test-route', 'redis_error', undefined, start).allowed)
+      .toBe(false);
+    expect(consumeFallback(key, max, 1_000, 'test-route', 'redis_error', undefined, start + 1_001).allowed)
+      .toBe(true);
+  });
+
+  it('increments the degraded counter per request', () => {
+    const before = getRateLimitCounters()['counter-test']?.degraded ?? 0;
+    consumeFallback('test:fallback:counter', 3, 60_000, 'counter-test', 'redis_unavailable', undefined, 1);
+    consumeFallback('test:fallback:counter', 3, 60_000, 'counter-test', 'redis_unavailable', undefined, 1);
+    expect(getRateLimitCounters()['counter-test']?.degraded).toBe(before + 2);
   });
 });

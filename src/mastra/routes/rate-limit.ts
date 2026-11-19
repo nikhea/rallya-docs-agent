@@ -14,6 +14,8 @@ import Redis from 'ioredis';
 import {
   clientIpSource,
   rateLimitEnabled,
+  rateLimitFallbackMultiplier,
+  redisCommandTimeoutMs,
   redisUrl,
   trustedProxyHops,
   type ClientIpSource,
@@ -47,6 +49,7 @@ export const getRedisClient = (): Redis | null => {
     lazyConnect: true,
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,
+    commandTimeout: redisCommandTimeoutMs,
     retryStrategy: times => Math.min(times * 200, 2_000),
   });
   return client;
@@ -59,12 +62,16 @@ export const getRedisClient = (): Redis | null => {
  */
 export const ensureRedisReady = async (redis: Redis): Promise<boolean> => {
   if (redis.status === 'ready') return true;
-  connecting ??= redis.connect().finally(() => {
-    connecting = null;
-  });
   try {
+    // connect() throws synchronously while ioredis is already connecting, so
+    // keep it inside the try; any failure means degraded mode, never a 500.
+    connecting ??= redis.connect().finally(() => {
+      connecting = null;
+    });
     await connecting;
-    return true;
+    // Widen to string: TS narrows `redis.status` after the early return above,
+    // but the await can change it back to 'ready'.
+    return (redis.status as string) === 'ready';
   } catch {
     return false;
   }
@@ -157,15 +164,25 @@ local ttl = redis.call('PTTL', KEYS[1])
 return { current, ttl }
 `;
 
-const warned = new Set<string>();
-const warnOnce = (message: string, error?: unknown): void => {
-  if (warned.has(message)) return;
-  warned.add(message);
-  console.warn(message, error ?? '');
+/** Per-route counters, readable by an admin/metrics endpoint if one is added. */
+export type RateLimitCounters = { allowed: number; limited: number; degraded: number };
+const counters = new Map<string, RateLimitCounters>();
+
+/** Expose a snapshot without leaking the mutable map. */
+export const getRateLimitCounters = (): Record<string, RateLimitCounters> => {
+  const out: Record<string, RateLimitCounters> = {};
+  for (const [route, value] of counters) out[route] = { ...value };
+  return out;
 };
 
-/** Result used when the limiter is disabled or Redis is unavailable. */
-const failOpen = (max: number): RateLimitResult => ({
+const bump = (route: string, kind: keyof RateLimitCounters): void => {
+  const current = counters.get(route) ?? { allowed: 0, limited: 0, degraded: 0 };
+  current[kind] += 1;
+  counters.set(route, current);
+};
+
+/** Result used only when limiting is explicitly disabled (no Redis / master off). */
+const disabledResult = (max: number): RateLimitResult => ({
   allowed: true,
   limit: max,
   remaining: max,
@@ -173,20 +190,102 @@ const failOpen = (max: number): RateLimitResult => ({
   resetAtSeconds: Math.ceil(Date.now() / 1_000),
 });
 
+/** Routes currently in degraded mode; used to log transitions once, not per request. */
+const degradedRoutes = new Set<string>();
+const markRecovered = (route: string): void => {
+  if (!degradedRoutes.delete(route)) return;
+  console.warn(
+    JSON.stringify({ level: 'warn', event: 'rate_limit_recovered', route }),
+  );
+};
+
 /**
- * Consume one request from a fixed-window bucket. Fail open on any Redis
- * problem: rate limiting protects the endpoint, it is not the endpoint.
+ * Bounded in-memory fallback bucket. Redis is shared across replicas; this is
+ * per instance, so with N replicas the effective limit is N × the fallback max.
+ * We keep it well below that risk by capping the multiplier in config.
+ */
+type FallbackBucket = { count: number; resetAt: number };
+const fallbackBuckets = new Map<string, FallbackBucket>();
+const FALLBACK_MAX_KEYS = 10_000;
+let lastFallbackSweep = 0;
+
+const sweepFallbackBuckets = (now: number): void => {
+  // Sweep at most once a second; the map is bounded anyway.
+  if (now - lastFallbackSweep < 1_000) return;
+  lastFallbackSweep = now;
+  for (const [key, bucket] of fallbackBuckets) {
+    if (bucket.resetAt <= now) fallbackBuckets.delete(key);
+  }
+};
+
+/**
+ * Degraded mode: still enforce a looser per-instance limit when Redis is down.
+ * Emits an error-level structured log on the transition and counts every
+ * degraded request so an alert can fire on a sustained non-zero rate.
+ */
+export const consumeFallback = (
+  key: string,
+  max: number,
+  windowMs: number,
+  route: string,
+  reason: 'redis_unavailable' | 'redis_error',
+  error?: unknown,
+  now = Date.now(),
+): RateLimitResult => {
+  bump(route, 'degraded');
+  if (!degradedRoutes.has(route)) {
+    degradedRoutes.add(route);
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        event: 'rate_limit_degraded',
+        route,
+        reason,
+        counter: 'rate_limit_degraded_total',
+        error: error instanceof Error ? error.message : error ? String(error) : undefined,
+      }),
+    );
+  }
+
+  const limit = Math.max(1, Math.floor(max * rateLimitFallbackMultiplier));
+  sweepFallbackBuckets(now);
+
+  let bucket = fallbackBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    // Map preserves insertion order: evict the oldest entry when full.
+    if (fallbackBuckets.size >= FALLBACK_MAX_KEYS) {
+      const oldest = fallbackBuckets.keys().next().value;
+      if (oldest !== undefined) fallbackBuckets.delete(oldest);
+    }
+    bucket = { count: 0, resetAt: now + windowMs };
+    fallbackBuckets.set(key, bucket);
+  }
+  bucket.count += 1;
+
+  const ttlMs = Math.max(0, bucket.resetAt - now);
+  return {
+    allowed: bucket.count <= limit,
+    limit,
+    remaining: Math.max(0, limit - bucket.count),
+    retryAfterSeconds: Math.ceil(ttlMs / 1_000),
+    resetAtSeconds: Math.ceil(bucket.resetAt / 1_000),
+  };
+};
+
+/**
+ * Consume one request from a fixed-window bucket. When Redis is unavailable the
+ * limiter degrades to a bounded in-memory floor instead of opening completely.
  */
 export const consumeRateLimit = async (
   key: string,
   max: number,
   windowMs: number,
+  route = 'unknown',
 ): Promise<RateLimitResult> => {
   const redis = getRedisClient();
-  if (!redis) return failOpen(max);
+  if (!redis) return disabledResult(max);
   if (!(await ensureRedisReady(redis))) {
-    warnOnce('[rate-limit] Redis unavailable; allowing request');
-    return failOpen(max);
+    return consumeFallback(key, max, windowMs, route, 'redis_unavailable');
   }
 
   try {
@@ -197,17 +296,22 @@ export const consumeRateLimit = async (
       String(windowMs),
     ) as [unknown, unknown];
     const count = Number(rawCount);
-    const ttlMs = Math.max(0, Number(rawTtl));
-    return {
+    const rawTtlMs = Number(rawTtl);
+    // PTTL is -2 if the key vanished, -1 if it has no expiry; treat both as a
+    // fresh window so retry-after and reset stay sane.
+    const ttlMs = Number.isFinite(rawTtlMs) && rawTtlMs > 0 ? rawTtlMs : windowMs;
+    markRecovered(route);
+    const result: RateLimitResult = {
       allowed: count <= max,
       limit: max,
       remaining: Math.max(0, max - count),
       retryAfterSeconds: Math.ceil(ttlMs / 1_000),
       resetAtSeconds: Math.ceil((Date.now() + ttlMs) / 1_000),
     };
+    bump(route, result.allowed ? 'allowed' : 'limited');
+    return result;
   } catch (error) {
-    warnOnce('[rate-limit] Redis error; allowing request', error);
-    return failOpen(max);
+    return consumeFallback(key, max, windowMs, route, 'redis_error', error);
   }
 };
 
@@ -232,7 +336,7 @@ export const rateLimit = ({ name, max, windowMs }: RateLimitOptions): Middleware
       trustedProxyHops,
     });
     // Task 5 replaces the fallback with an explicit deny/strict policy.
-    const result = await consumeRateLimit(rateLimitKey(name, ip ?? 'unknown'), max, windowMs);
+    const result = await consumeRateLimit(rateLimitKey(name, ip ?? 'unknown'), max, windowMs, name);
 
     c.header('X-RateLimit-Limit', String(result.limit));
     c.header('X-RateLimit-Remaining', String(result.remaining));

@@ -154,6 +154,27 @@ export const clientIpSource: ClientIpSource =
 const parsedHops = Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? '0', 10);
 export const trustedProxyHops = Number.isInteger(parsedHops) && parsedHops >= 0 ? parsedHops : 0;
 
+/**
+ * Redis command timeout. A slow Redis must not add latency to a public route;
+ * on timeout the limiter drops into its in-memory degraded mode.
+ */
+const parsedTimeout = Number(process.env.REDIS_COMMAND_TIMEOUT_MS ?? '200');
+export const redisCommandTimeoutMs =
+  Number.isFinite(parsedTimeout) && parsedTimeout >= 50
+    ? Math.min(2_000, parsedTimeout)
+    : 200;
+
+/**
+ * Multiplier for the in-memory fallback limit while Redis is unavailable. The
+ * floor is looser than the Redis limit (N replicas each get their own bucket)
+ * but still protects the LLM endpoint during an outage.
+ */
+const parsedFallback = Number(process.env.RATE_LIMIT_FALLBACK_MULTIPLIER ?? '2');
+export const rateLimitFallbackMultiplier =
+  Number.isFinite(parsedFallback) && parsedFallback >= 1
+    ? Math.min(10, parsedFallback)
+    : 2;
+
 /** Parse a positive integer env var, falling back on missing/invalid values. */
 const positiveIntEnv = (name: string, fallback: number): number => {
   const value = Number(process.env[name]);
