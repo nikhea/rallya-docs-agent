@@ -61,3 +61,21 @@ export const ensureRedisReady = async (redis: Redis): Promise<boolean> => {
     return false;
   }
 };
+
+type HeaderGetter = (name: string) => string | undefined;
+
+/**
+ * Client IP for the rate bucket. Railway/Cloud Run set `x-forwarded-for`, whose
+ * first entry is the original client; `x-real-ip` is the fallback. If the server
+ * is ever exposed directly these headers are spoofable — use
+ * `@hono/node-server`'s `getConnInfo()` there instead.
+ */
+export const clientIpFromHeaders = (getHeader: HeaderGetter): string => {
+  const forwarded = getHeader('x-forwarded-for')?.split(',')[0]?.trim();
+  if (forwarded) return forwarded;
+  const real = getHeader('x-real-ip')?.trim();
+  return real || 'unknown';
+};
+
+/** Namespace buckets by route so feedback traffic can't consume chat quota. */
+export const rateLimitKey = (name: string, ip: string): string => `ratelimit:${name}:${ip}`;
