@@ -33,7 +33,7 @@ would not protect these endpoints.
 - [x] **7. `feat(rate-limit): add route middleware with headers and 429`** — `X-RateLimit-*` headers, `Retry-After`, JSON 429 response.
 - [x] **8. `feat(routes): rate limit /docs-chat`** — put the limiter first in the route's middleware array.
 - [x] **9. `feat(routes): rate limit /docs-feedback`** — add the limiter to the route's middleware array.
-- [ ] **10. `test(rate-limit): add helper unit tests and verify`** — `bun test` for pure helpers, `bun run typecheck`, and manual verification notes.
+- [x] **10. `test(rate-limit): add helper unit tests and verify`** — `bun test` for pure helpers, `bun run typecheck`, and manual verification notes.
 
 ## Implementation details
 
@@ -90,3 +90,14 @@ Run `INCR` and `PEXPIRE` together so a key cannot be left without a TTL.
 - `src/mastra/routes/rate-limit.ts` — new middleware and helpers
 - `src/mastra/routes/rate-limit.test.ts` — unit tests
 - `src/mastra/routes/docs-chat.ts`, `src/mastra/routes/docs-feedback.ts` — middleware wiring
+- `tsconfig.json` — include Bun types so `bun:test` imports typecheck
+
+## Verification results
+
+- `bun test src/mastra/routes/rate-limit.test.ts` — 4 passed, 0 failed.
+- `bun run typecheck` — no type errors in 22 files.
+- Redis integration smoke test (local `redis-server` on port 6399): with `max=2`,
+  `windowMs=60000`, calls 1 and 2 returned `allowed: true`, call 3 returned
+  `allowed: false`; `redis-cli ttl ratelimit:smoke2:203.0.113.9` returned 60.
+- Still to check in a deployed environment: 429 responses include CORS headers,
+  and the fail-open path when Redis is unreachable.
